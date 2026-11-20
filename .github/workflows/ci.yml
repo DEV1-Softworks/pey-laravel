@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, master]
+  push:
+    branches: [develop, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to full commit SHAs (tag in the trailing comment).
+jobs:
+  tests:
+    name: Tests (Laravel ${{ matrix.laravel }}, PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { laravel: '12', testbench: '10', php: '8.2' }
+          - { laravel: '12', testbench: '10', php: '8.3' }
+          - { laravel: '12', testbench: '10', php: '8.4' }
+          - { laravel: '12', testbench: '10', php: '8.5' }
+          - { laravel: '13', testbench: '11', php: '8.3' }
+          - { laravel: '13', testbench: '11', php: '8.4' }
+          - { laravel: '13', testbench: '11', php: '8.5' }
+    env:
+      LARAVEL: ${{ matrix.laravel }}
+      TESTBENCH: ${{ matrix.testbench }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: pcov
+          tools: composer:v2
+          ini-file: development
+
+      - name: Locate Composer cache
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-laravel${{ matrix.laravel }}-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-laravel${{ matrix.laravel }}-
+
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-lock
+
+      # This is a library, so there is no lock file: resolve per Laravel and PHP
+      # version. --with adds temporary constraints without editing composer.json.
+      - name: Install dependencies for Laravel ${{ matrix.laravel }}
+        run: composer update --no-interaction --no-progress --prefer-dist --with "laravel/framework:^${LARAVEL}.0" --with "orchestra/testbench:^${TESTBENCH}.0"
+
+      - name: Check the resolved Laravel version
+        run: |
+          installed="$(composer show laravel/framework --format=json | php -r 'echo json_decode(stream_get_contents(STDIN), true)["versions"][0];')"
+          echo "laravel/framework ${installed}"
+          case "${installed#v}" in
+            "${LARAVEL}".*) ;;
+            *) echo "::error::Expected Laravel ${LARAVEL}.x, got ${installed}."; exit 1 ;;
+          esac
+
+      - name: Audit dependencies
+        run: composer audit --no-interaction
+
+      - name: Run tests with coverage
+        run: vendor/bin/phpunit --coverage-clover build/coverage.xml
+
+      - name: Enforce coverage thresholds
+        run: php tools/coverage-check.php build/coverage.xml
+
+  static-analysis:
+    name: PHPStan (Laravel ${{ matrix.laravel }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { laravel: '12', testbench: '10', php: '8.2' }
+          - { laravel: '13', testbench: '11', php: '8.3' }
+    env:
+      LARAVEL: ${{ matrix.laravel }}
+      TESTBENCH: ${{ matrix.testbench }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies for Laravel ${{ matrix.laravel }}
+        run: composer update --no-interaction --no-progress --prefer-dist --with "laravel/framework:^${LARAVEL}.0" --with "orchestra/testbench:^${TESTBENCH}.0"
+
+      - name: Refuse PHPStan baselines and ignored errors
+        run: |
+          if ls phpstan-baseline.* >/dev/null 2>&1; then
+            echo "::error::A PHPStan baseline file exists. Fix the errors instead."
+            exit 1
+          fi
+          if grep -nE '^\s*(ignoreErrors|baseline)\b|phpstan-baseline' phpstan.neon.dist; then
+            echo "::error::phpstan.neon.dist must not ignore errors or include a baseline."
+            exit 1
+          fi
+
+      - name: Run PHPStan
+        run: composer analyse
+
+  coding-standards:
+    name: PHP-CS-Fixer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Run on the lowest supported PHP so the fixer never introduces newer syntax.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Check coding standards
+        run: composer cs
+
+  secret-scan:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The CLI is used directly (instead of gitleaks-action, which requires a
+      # license for organization repositories) and its checksum is verified.
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          rm -f "$archive" gitleaks
+
+      - name: Scan the full git history
+        run: gitleaks git --redact --verbose --exit-code 1 .
