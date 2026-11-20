@@ -73,6 +73,15 @@ final class PackageMetadataTest extends PHPUnitTestCase
         self::assertContains('/CLAUDE.local.md', $lines);
     }
 
+    public function testCiRunsOnDevelopAndMasterAndNeverOnMain(): void
+    {
+        $workflow = file_get_contents(\dirname(__DIR__) . '/.github/workflows/ci.yml');
+        self::assertIsString($workflow);
+
+        self::assertSame(2, substr_count($workflow, 'branches: [develop, master]'));
+        self::assertDoesNotMatchRegularExpression('/\bmain\b/', $workflow);
+    }
+
     /**
      * @return array<string, mixed>
      */
