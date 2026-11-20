@@ -6,12 +6,15 @@ namespace Dev1\Pey\Laravel\Tests\Clock;
 
 use Carbon\CarbonImmutable;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
+use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Tests\TestCase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\UsesClass;
 
 #[CoversClass(LaravelClock::class)]
+#[UsesClass(PeyServiceProvider::class)]
 final class LaravelClockTest extends TestCase
 {
     public function testItFollowsLaravelTimeTravel(): void

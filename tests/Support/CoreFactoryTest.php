@@ -10,6 +10,7 @@ use Dev1\Pey\Exception\SecretExposureException;
 use Dev1\Pey\Exception\WebhookVerificationException;
 use Dev1\Pey\Http\RetryPolicy;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
+use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Support\CoreFactory;
 use Dev1\Pey\Laravel\Tests\TestCase;
 use Dev1\Pey\Testing\WebhookSigner;
@@ -21,8 +22,11 @@ use Illuminate\Log\LogManager;
 use Illuminate\Support\Facades\Date;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\UsesClass;
 
 #[CoversClass(CoreFactory::class)]
+#[UsesClass(PeyServiceProvider::class)]
+#[UsesClass(LaravelClock::class)]
 final class CoreFactoryTest extends TestCase
 {
     /**
