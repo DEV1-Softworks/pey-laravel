@@ -9,10 +9,16 @@ includes:
 parameters:
   level: max
   paths:
+    - config
     - src
     - tests
     - tools
   tmpDir: build/phpstan
+
+  # Larastan only allows env() in config directories; this package's lives here.
+  configDirectories:
+    - %currentWorkingDirectory%/config
+
   phpVersion:
     min: 80200
     max: 80599
