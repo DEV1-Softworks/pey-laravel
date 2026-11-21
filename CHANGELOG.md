@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Documentation for labs.dev1.mx in `docs/`: installation, configuration, webhooks, idempotency, testing and security. A README quick start goes from install to confirming a transaction. `DocumentationTest` checks that every PHP example parses and its imports exist, that every link and anchor resolves, and that the configuration page lists exactly the variables `config/pey.php` reads.
 - `Dev1\Pey\Laravel\Testing\InteractsWithPey` for application tests:
   - `fakePey()` replaces the client with the SDK's fake.
   - `postPeyWebhook()` signs a simulated payment (or a body) with the configured secret, or a random test secret, and posts it to the `pey.webhooks` route.
