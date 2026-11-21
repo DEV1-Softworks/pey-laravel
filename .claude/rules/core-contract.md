@@ -27,7 +27,7 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 | `Exception\WebhookVerificationException::failure()` | the reason logged at `warning` | A `VerificationFailure` enum value. It never contains header values. |
 | `Idempotency\IdempotencyStore` | implemented by `CacheIdempotencyStore` | `acquire` (atomic) / `remember` / `release` / `recall` |
 | `Idempotency\IdempotentRequests` | bound with the cache store | |
-| `Testing\FakePeyClient`, `RecordedCall` | `Pey::fake()` | |
+| `Testing\FakePeyClient`, `RecordedCall` | `Pey::fake()`, `Pey::recordedCalls()`, `Pey::callsTo()` | Built as `new FakePeyClient(allowedClabes, ClockInterface)` from `pey.allowed_clabes` (or the given list) and the container clock. Calls are read through `recordedCalls()` and `callsTo()`. |
 | `Testing\WebhookSigner`, `SignedWebhook` | `pey:webhook:sign`, `InteractsWithPey` | Pass the timestamp from the Laravel clock. The signer defaults to `time()`. |
 | `Validation\Clabe::mask()` | CLABEs in logs and output | |
 | `Version::VERSION` | `php artisan about` | |

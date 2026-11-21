@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Dev1\Pey\Laravel\Tests\Support;
 
 use Dev1\Pey\Config;
+use Dev1\Pey\Dto\Request\CreateQrRequest;
+use Dev1\Pey\Dto\Request\RegisterBankAccountRequest;
+use Dev1\Pey\Enum\Entity;
+use Dev1\Pey\Exception\BankAccountNotAllowedException;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Exception\SecretExposureException;
 use Dev1\Pey\Exception\WebhookVerificationException;
@@ -13,6 +17,7 @@ use Dev1\Pey\Laravel\Clock\LaravelClock;
 use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Support\CoreFactory;
 use Dev1\Pey\Laravel\Tests\TestCase;
+use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Testing\WebhookSigner;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\VerificationFailure;
@@ -270,6 +275,76 @@ final class CoreFactoryTest extends TestCase
         }
     }
 
+    // ------------------------------------------------------------------ fake
+
+    public function testItBuildsAFakeClientWithoutAnyPeySetting(): void
+    {
+        $fake = CoreFactory::fakeClient(self::repository(), new LaravelClock());
+
+        // No allowlist: bank account registration is blocked, as in production.
+        $this->expectException(BankAccountNotAllowedException::class);
+        self::registerBankAccount($fake, TestSecrets::CLABE);
+    }
+
+    public function testTheFakeIsGuardedByTheConfiguredAllowlist(): void
+    {
+        $fake = CoreFactory::fakeClient(self::repository(['allowed_clabes' => ' ' . TestSecrets::CLABE . ', ']), new LaravelClock());
+
+        self::registerBankAccount($fake, TestSecrets::CLABE);
+        self::assertCount(1, $fake->callsTo('bankAccounts.register'));
+
+        $this->expectException(BankAccountNotAllowedException::class);
+        self::registerBankAccount($fake, TestSecrets::OTHER_CLABE);
+    }
+
+    public function testAGivenAllowlistReplacesTheConfiguredOne(): void
+    {
+        $fake = CoreFactory::fakeClient(
+            self::repository(['allowed_clabes' => TestSecrets::CLABE]),
+            new LaravelClock(),
+            [TestSecrets::OTHER_CLABE],
+        );
+
+        self::registerBankAccount($fake, TestSecrets::OTHER_CLABE);
+
+        $this->expectException(BankAccountNotAllowedException::class);
+        self::registerBankAccount($fake, TestSecrets::CLABE);
+    }
+
+    /**
+     * @param list<string>|null $given
+     */
+    #[DataProvider('provideInvalidFakeAllowlists')]
+    public function testTheFakeReportsAnInvalidClabeMasked(string $configured, ?array $given): void
+    {
+        try {
+            CoreFactory::fakeClient(self::repository(['allowed_clabes' => $configured]), new LaravelClock(), $given);
+            self::fail('Expected a ConfigurationException.');
+        } catch (ConfigurationException $e) {
+            self::assertStringContainsString(substr(TestSecrets::INVALID_CLABE, -4), $e->getMessage());
+            self::assertStringNotContainsString(TestSecrets::INVALID_CLABE, $e->getMessage());
+        }
+    }
+
+    public function testTheFakeRefusesAnAllowlistOfTheWrongType(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.allowed_clabes setting (PEY_ALLOWED_CLABES) must be a comma-separated string or a list of strings.');
+
+        CoreFactory::fakeClient(self::repository(['allowed_clabes' => 42]), new LaravelClock());
+    }
+
+    public function testTheFakeUsesTheGivenClock(): void
+    {
+        $this->travelTo(new \DateTimeImmutable('2026-03-04 05:06:07 UTC'));
+        $fake = CoreFactory::fakeClient(self::repository(), new LaravelClock());
+
+        $qr = $fake->codi()->createQr(new CreateQrRequest('150.00', concept: 'Order 1'));
+        $payment = $fake->simulateQrPayment($qr->id);
+
+        self::assertSame('2026-03-04T05:06:07+00:00', $payment->transaction->dateCreated->format(\DATE_ATOM));
+    }
+
     // ---------------------------------------------------------------- logger
 
     public function testItUsesTheDefaultLogChannelWhenNoneIsConfigured(): void
@@ -391,6 +466,15 @@ final class CoreFactoryTest extends TestCase
     }
 
     /**
+     * @return iterable<string, array{string, list<string>|null}>
+     */
+    public static function provideInvalidFakeAllowlists(): iterable
+    {
+        yield 'configured' => [TestSecrets::CLABE . ',' . TestSecrets::INVALID_CLABE, null];
+        yield 'given' => [TestSecrets::CLABE, [TestSecrets::INVALID_CLABE]];
+    }
+
+    /**
      * @return iterable<string, array{array<string, mixed>}>
      */
     public static function provideMissingWebhookSecrets(): iterable
@@ -437,6 +521,11 @@ final class CoreFactoryTest extends TestCase
         self::assertIsArray($defaults);
 
         return new Repository(['pey' => array_replace_recursive($defaults, $pey)]);
+    }
+
+    private static function registerBankAccount(FakePeyClient $fake, string $clabe): void
+    {
+        $fake->bankAccounts()->register(new RegisterBankAccountRequest('Main', 'Pey Laravel Test', $clabe, Entity::Business));
     }
 
     private static function assertNoSecretInTrace(\Throwable $e, string $secret): void

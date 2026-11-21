@@ -8,6 +8,7 @@ use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Http\RetryPolicy;
 use Dev1\Pey\Security\Secret;
+use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\WebhookVerifier;
 use Illuminate\Contracts\Config\Repository;
@@ -78,6 +79,20 @@ final class CoreFactory
             self::integer($config, 'pey.webhooks.tolerance', WebhookVerifier::DEFAULT_TOLERANCE_SECONDS),
             $clock,
         );
+    }
+
+    /**
+     * The SDK's FakePeyClient, guarded by the configured CLABE allowlist
+     * (unless a list is given) and driven by the given clock. It never reads
+     * the API key or the webhook secrets, so it works without any Pey setting.
+     *
+     * @param list<string>|null $allowedClabes null for the configured `pey.allowed_clabes`
+     *
+     * @throws ConfigurationException when a setting has the wrong type or a CLABE is invalid
+     */
+    public static function fakeClient(#[\SensitiveParameter] Repository $config, ClockInterface $clock, ?array $allowedClabes = null): FakePeyClient
+    {
+        return new FakePeyClient($allowedClabes ?? self::allowedClabes($config), $clock);
     }
 
     /**
