@@ -6,9 +6,12 @@ namespace Dev1\Pey\Laravel;
 
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
+use Dev1\Pey\Idempotency\IdempotencyStore;
+use Dev1\Pey\Idempotency\IdempotentRequests;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
 use Dev1\Pey\Laravel\Http\Controllers\PeyWebhookController;
 use Dev1\Pey\Laravel\Http\Middleware\VerifyPeyWebhook;
+use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
 use Dev1\Pey\Laravel\Support\CoreFactory;
 use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\PeyClient;
@@ -17,6 +20,7 @@ use Dev1\Pey\Webhooks\WebhookVerifier;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Log\LogManager;
 use Illuminate\Routing\Route;
@@ -98,6 +102,24 @@ final class PeyServiceProvider extends ServiceProvider
         $this->app->singleton(WebhookDeduplicator::class, static fn(Container $app): WebhookDeduplicator => CoreFactory::webhookDeduplicator(
             $app->make(Repository::class),
             $app->make(CacheFactory::class),
+        ));
+
+        $this->app->singleton(CacheIdempotencyStore::class, static fn(Container $app): CacheIdempotencyStore => CoreFactory::idempotencyStore(
+            $app->make(Repository::class),
+            $app->make(CacheFactory::class),
+            $app instanceof Application && $app->runningUnitTests(),
+        ));
+
+        // An application may bind its own store; IdempotentRequests uses it.
+        $this->app->singleton(IdempotencyStore::class, static fn(Container $app): IdempotencyStore => $app->make(CacheIdempotencyStore::class));
+
+        // Not shared: it keeps no state (the store does), and each instance
+        // wraps the client bound at that moment, so Pey::fake() applies.
+        $this->app->bind(IdempotentRequests::class, static fn(Container $app): IdempotentRequests => new IdempotentRequests(
+            $app->make(PeyClientInterface::class),
+            $app->make(IdempotencyStore::class),
+            clock: $app->make(ClockInterface::class),
+            logger: self::logger($app),
         ));
 
         // The configured channel, given to the middleware only: the

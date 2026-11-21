@@ -43,6 +43,9 @@ final class Pey extends Facade
      *
      * - It replaces the PeyClientInterface binding and this facade's root.
      *   Code that type-hints the concrete PeyClient still gets the real one.
+     * - IdempotentRequests resolved after faking wraps the fake, with the
+     *   configured idempotency store. Services you resolved before faking
+     *   keep the client they were given.
      * - Bank account registration is guarded by `pey.allowed_clabes`, as in
      *   production, unless you pass a list.
      * - It uses the container's clock, so `$this->travelTo()` moves its
