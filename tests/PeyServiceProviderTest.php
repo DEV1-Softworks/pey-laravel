@@ -6,9 +6,12 @@ namespace Dev1\Pey\Laravel\Tests;
 
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
+use Dev1\Pey\Idempotency\IdempotencyStore;
+use Dev1\Pey\Idempotency\IdempotentRequests;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
 use Dev1\Pey\Laravel\Http\Controllers\PeyWebhookController;
 use Dev1\Pey\Laravel\Http\Middleware\VerifyPeyWebhook;
+use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
 use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Support\CoreFactory;
 use Dev1\Pey\Laravel\Tests\Support\RecordingLogger;
@@ -327,6 +330,9 @@ final class PeyServiceProviderTest extends TestCase
         yield 'webhook verifier' => [WebhookVerifier::class];
         yield 'logger' => [PeyServiceProvider::LOGGER];
         yield 'webhook dedup store' => [WebhookDeduplicator::class];
+        yield 'idempotency store' => [IdempotencyStore::class];
+        yield 'cache idempotency store' => [CacheIdempotencyStore::class];
+        yield 'idempotent requests' => [IdempotentRequests::class];
     }
 
     /**

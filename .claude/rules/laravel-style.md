@@ -19,7 +19,8 @@
 ## Service provider
 
 - `register()` only declares bindings, as closures that run at resolve time. Never resolve the client, verifier or store in `register()` or `boot()`. See `security.md`, section 2.
-- Package classes are singletons keyed by the core's types: `Config`, `PeyClientInterface` (with `PeyClient` as an alias), `WebhookVerifier`, `IdempotencyStore`, `IdempotentRequests`.
+- Package classes are singletons keyed by the core's types: `Config`, `PeyClientInterface` (with `PeyClient` as an alias), `WebhookVerifier`, `IdempotencyStore` (resolving `CacheIdempotencyStore`).
+  - `IdempotentRequests` is the exception: it is bound non-shared. It keeps no state of its own (the store does), so each instance can wrap the client bound at that moment, and `Pey::fake()` applies.
 - Global PSR bindings the app may already own, such as `Psr\Clock\ClockInterface`, use `singletonIf()`, so the application's binding wins.
 - Never bind or replace the application's global `Psr\Log\LoggerInterface`. Pass the configured channel (`pey.log_channel`) to the core objects explicitly.
 - Read settings with `config('pey.…')` inside factories. Call `env()` only in `config/pey.php`.
