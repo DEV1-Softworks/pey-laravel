@@ -25,6 +25,8 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 | `Webhooks\VerifiedWebhook` | `PeyWebhookReceived`, deduplication by `$id` | |
 | `Webhooks\Event\*` | wrapped by the typed Laravel events | `CodiQrPaymentReceived`, `CodiPushNotificationPaymentReceived`, `PaymentLinkStatusUpdated`, `BankAccountUpdated`, `UnknownEvent` |
 | `Exception\WebhookVerificationException::failure()` | the reason logged at `warning` | A `VerificationFailure` enum value. It never contains header values. |
+| `Exception\UnexpectedResponseException` | a verified body the core cannot read | Thrown by `verify()` after the signature check. Its message names a field, never a value. |
+| `Webhooks\Event\WebhookEvent` | `WebhookEvents::for()` | Open interface: a type from a newer core gets only `PeyWebhookReceived`. |
 | `Idempotency\IdempotencyStore` | implemented by `CacheIdempotencyStore` | `acquire` (atomic) / `remember` / `release` / `recall` |
 | `Idempotency\IdempotentRequests` | bound with the cache store | |
 | `Testing\FakePeyClient`, `RecordedCall` | `Pey::fake()`, `Pey::recordedCalls()`, `Pey::callsTo()` | Built as `new FakePeyClient(allowedClabes, ClockInterface)` from `pey.allowed_clabes` (or the given list) and the container clock. Calls are read through `recordedCalls()` and `callsTo()`. |
@@ -44,9 +46,10 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
    - Needed by `pey:webhook:sign {event}` and `InteractsWithPey::postPeyWebhook(object $coreEvent)`.
    - The core only parses bodies into events (`EventFactory`, internal), and its sample payloads are in `tests/Fixtures`, which is not shipped.
    - Proposal: `Testing\WebhookPayloads::fromEvent(WebhookEvent): string` and `::sample(string $type): string`.
+   - Partial workaround: `FakePeyClient`'s simulations (`simulateQrPayment()`, `simulatePushNotificationPayment()`, `simulatePaymentLinkPayment()`, `activateBankAccount()`) return documented bodies for every modelled type. The bridge's tests use them (`tests/Support/WebhookBodies.php`), and `pey:webhook:sign {event}` can too. `postPeyWebhook(object $coreEvent)` still needs `fromEvent()`.
 2. **Store contract tests.**
    - The core's idempotency store tests live in `tests/`, which is not shipped, so the bridge keeps equivalent tests.
    - Optional proposal: an abstract contract test case shipped by the core.
-3. **To review with the maintainer before `webhooks`.**
-   - `BankAccountUpdated::$clabe` is the full CLABE, and `UnknownEvent::$payload` is the whole verified body, decoded.
-   - Both end up in queue payloads when listeners are queued.
+3. **Personal data in queued events.** Resolved without a core change.
+   - `BankAccountUpdated::$clabe` is the full CLABE, and `UnknownEvent::$payload` is the whole verified body, decoded. Both end up in queue payloads when listeners are queued.
+   - The maintainer chose (2026-11-20) to document it on the Laravel events and in the README rather than filter the core objects.
