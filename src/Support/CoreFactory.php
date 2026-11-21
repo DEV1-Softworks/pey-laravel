@@ -7,12 +7,16 @@ namespace Dev1\Pey\Laravel\Support;
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Http\RetryPolicy;
+use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
 use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\Security\Secret;
 use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\WebhookVerifier;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\NullStore;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Log\LogManager;
 use Psr\Clock\ClockInterface;
@@ -47,6 +51,7 @@ final class CoreFactory
         'pey.webhooks.tolerance' => 'PEY_WEBHOOK_TOLERANCE',
         'pey.webhooks.dedup_store' => 'PEY_WEBHOOK_DEDUP_STORE',
         'pey.webhooks.dedup_ttl' => 'PEY_WEBHOOK_DEDUP_TTL',
+        'pey.idempotency.store' => 'PEY_IDEMPOTENCY_STORE',
         'pey.log_channel' => 'PEY_LOG_CHANNEL',
     ];
 
@@ -93,10 +98,7 @@ final class CoreFactory
      */
     public static function webhookDeduplicator(#[\SensitiveParameter] Repository $config, CacheFactory $cache): WebhookDeduplicator
     {
-        $name = self::optionalString($config, 'pey.webhooks.dedup_store');
-        if ($name !== null && !\is_array($config->get('cache.stores.' . $name))) {
-            throw ConfigurationException::because('The pey.webhooks.dedup_store setting (PEY_WEBHOOK_DEDUP_STORE) names a cache store that config/cache.php does not define.');
-        }
+        $name = self::cacheStoreName($config, 'pey.webhooks.dedup_store');
 
         if (self::dedupDriver($config, $name) === 'null') {
             throw ConfigurationException::because('The Pey webhook dedup store uses the null cache driver, which stores nothing, so every webhook would be ignored as a duplicate. Set PEY_WEBHOOK_DEDUP_STORE (config key pey.webhooks.dedup_store) to a shared cache store.');
@@ -114,6 +116,37 @@ final class CoreFactory
         }
 
         return new WebhookDeduplicator($cache->store($name), $ttl);
+    }
+
+    /**
+     * The store that IdempotentRequests keeps its records in:
+     * `pey.idempotency.store`, or the default cache store.
+     *
+     * It must make acquire() atomic across every process that creates
+     * charges, so a store whose locks cannot is refused: one without locks,
+     * `null` (its lock always succeeds), and `array` outside tests (its lock
+     * and records live in one process).
+     *
+     * @throws ConfigurationException
+     */
+    public static function idempotencyStore(#[\SensitiveParameter] Repository $config, CacheFactory $cache, bool $testing): CacheIdempotencyStore
+    {
+        $repository = $cache->store(self::cacheStoreName($config, 'pey.idempotency.store'));
+        $store = $repository->getStore();
+
+        if ($store instanceof NullStore) {
+            throw self::unsafeIdempotencyStore('uses the null cache driver, which stores nothing, so every charge could be sent twice');
+        }
+
+        if ($store instanceof ArrayStore && !$testing) {
+            throw self::unsafeIdempotencyStore('uses the array cache driver, which keeps records and locks in the memory of one process, so two workers could both send the same charge');
+        }
+
+        if (!$store instanceof LockProvider) {
+            throw self::unsafeIdempotencyStore('does not support atomic locks, so two processes could both send the same charge');
+        }
+
+        return new CacheIdempotencyStore($repository, $store);
     }
 
     /**
@@ -319,6 +352,22 @@ final class CoreFactory
     }
 
     /**
+     * A cache store name from the given setting, or null for the default
+     * store.
+     *
+     * @throws ConfigurationException when the setting is not a string, or names an undefined store
+     */
+    private static function cacheStoreName(#[\SensitiveParameter] Repository $config, string $key): ?string
+    {
+        $name = self::optionalString($config, $key);
+        if ($name !== null && !\is_array($config->get('cache.stores.' . $name))) {
+            throw ConfigurationException::because(\sprintf('The %s setting (%s) names a cache store that config/cache.php does not define.', $key, self::ENV[$key] ?? 'env'));
+        }
+
+        return $name;
+    }
+
+    /**
      * The driver of the named cache store, or of the default store.
      */
     private static function dedupDriver(#[\SensitiveParameter] Repository $config, ?string $store): mixed
@@ -358,6 +407,11 @@ final class CoreFactory
         } catch (ConfigurationException) {
             return 'invalid';
         }
+    }
+
+    private static function unsafeIdempotencyStore(string $problem): ConfigurationException
+    {
+        return ConfigurationException::because('The Pey idempotency store ' . $problem . '. Set PEY_IDEMPOTENCY_STORE (config key pey.idempotency.store) to a shared cache store with atomic locks, such as redis or database.');
     }
 
     private static function invalid(string $key, string $expected): ConfigurationException

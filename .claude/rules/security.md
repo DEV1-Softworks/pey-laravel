@@ -48,8 +48,18 @@ These apply on top of the core's rules (`dev1/pey-php-sdk`, `.claude/rules/secur
 
 ## 6. Idempotency store
 
-- `CacheIdempotencyStore::acquire()` must be atomic across processes. It uses `Cache::lock()` on the configured store and refuses stores without atomic locks (`array` outside tests) when it is resolved.
+- `CacheIdempotencyStore::acquire()` must be atomic across processes.
+  - It takes `Cache::lock()` on the key, then calls `add()` on the store, so drivers whose `add()` is atomic guard a second time.
+  - It waits a few seconds for a lock another process holds, then throws `LockTimeoutException`. It never assumes the key is free.
+- When the store is resolved, refuse one that cannot lock across processes. The check is on the store instance, not on the driver name:
+  - a store without `LockProvider`;
+  - `null`, whose lock always succeeds;
+  - `array` outside the testing environment.
 - On a storage error, throw. The core treats a failing `acquire()` as "do not send".
+  - `add()` answering false while the record is absent is a failed write, not "already acquired".
+  - A failed `put()` in `remember()`, or a value that is not a string in `recall()`, throws too.
+  - Messages never contain the key or the record.
+- `IdempotentRequests` is bound non-shared, so an instance resolved after `Pey::fake()` never wraps the real client.
 
 ## 7. No secrets in the repository
 

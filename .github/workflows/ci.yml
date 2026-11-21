@@ -21,17 +21,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # redis: the client the idempotency store contract runs on against Redis.
         include:
-          - { laravel: '12', testbench: '10', php: '8.2' }
-          - { laravel: '12', testbench: '10', php: '8.3' }
-          - { laravel: '12', testbench: '10', php: '8.4' }
-          - { laravel: '12', testbench: '10', php: '8.5' }
-          - { laravel: '13', testbench: '11', php: '8.3' }
-          - { laravel: '13', testbench: '11', php: '8.4' }
-          - { laravel: '13', testbench: '11', php: '8.5' }
+          - { laravel: '12', testbench: '10', php: '8.2', redis: predis }
+          - { laravel: '12', testbench: '10', php: '8.3', redis: phpredis }
+          - { laravel: '12', testbench: '10', php: '8.4', redis: phpredis }
+          - { laravel: '12', testbench: '10', php: '8.5', redis: phpredis }
+          - { laravel: '13', testbench: '11', php: '8.3', redis: phpredis }
+          - { laravel: '13', testbench: '11', php: '8.4', redis: phpredis }
+          - { laravel: '13', testbench: '11', php: '8.5', redis: phpredis }
+    # The image is pinned by digest, like the actions are by SHA.
+    services:
+      redis:
+        image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
     env:
       LARAVEL: ${{ matrix.laravel }}
       TESTBENCH: ${{ matrix.testbench }}
+      PEY_TEST_REDIS_HOST: 127.0.0.1
+      PEY_TEST_REDIS_PORT: '6379'
+      PEY_TEST_REDIS_CLIENT: ${{ matrix.redis }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,6 +58,7 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           coverage: pcov
+          extensions: redis
           tools: composer:v2
           ini-file: development
 
@@ -77,8 +93,9 @@ jobs:
       - name: Audit dependencies
         run: composer audit --no-interaction
 
+      # Every test must run here, the Redis ones included: a skip is a failure.
       - name: Run tests with coverage
-        run: vendor/bin/phpunit --coverage-clover build/coverage.xml
+        run: vendor/bin/phpunit --fail-on-skipped --coverage-clover build/coverage.xml
 
       - name: Enforce coverage thresholds
         run: php tools/coverage-check.php build/coverage.xml
