@@ -35,6 +35,7 @@ use Illuminate\Support\Facades\Date;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\UsesClass;
+use Psr\Log\NullLogger;
 
 #[CoversClass(CoreFactory::class)]
 #[UsesClass(PeyServiceProvider::class)]
@@ -492,7 +493,7 @@ final class CoreFactoryTest extends TestCase
 
     public function testTheIdempotencyStoreIsTheDefaultCacheStoreInTests(): void
     {
-        $store = CoreFactory::idempotencyStore(self::repository(), $this->cacheFactory(), true);
+        $store = CoreFactory::idempotencyStore(self::repository(), $this->cacheFactory(), true, false, new NullLogger());
 
         self::assertTrue($store->acquire('k', 'started', 60));
         self::assertTrue($this->cacheFactory()->store()->has('pey:idempotency:k'));
@@ -503,7 +504,7 @@ final class CoreFactoryTest extends TestCase
         config()->set('cache.stores.charges', ['driver' => 'array']);
         $repository = self::repository(['idempotency' => ['store' => 'charges']], ['stores' => ['charges' => ['driver' => 'array']]]);
 
-        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), true)->acquire('k', 'started', 60);
+        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), true, false, new NullLogger())->acquire('k', 'started', 60);
 
         self::assertTrue($this->cacheFactory()->store('charges')->has('pey:idempotency:k'));
         self::assertFalse($this->cacheFactory()->store()->has('pey:idempotency:k'));
@@ -514,7 +515,7 @@ final class CoreFactoryTest extends TestCase
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('The pey.idempotency.store setting (PEY_IDEMPOTENCY_STORE) names a cache store that config/cache.php does not define.');
 
-        CoreFactory::idempotencyStore(self::repository(['idempotency' => ['store' => 'missing']]), $this->cacheFactory(), true);
+        CoreFactory::idempotencyStore(self::repository(['idempotency' => ['store' => 'missing']]), $this->cacheFactory(), true, false, new NullLogger());
     }
 
     public function testItRefusesAnIdempotencyStoreOfTheWrongType(): void
@@ -522,7 +523,7 @@ final class CoreFactoryTest extends TestCase
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('The pey.idempotency.store setting (PEY_IDEMPOTENCY_STORE) must be a string.');
 
-        CoreFactory::idempotencyStore(self::repository(['idempotency' => ['store' => ['redis']]]), $this->cacheFactory(), true);
+        CoreFactory::idempotencyStore(self::repository(['idempotency' => ['store' => ['redis']]]), $this->cacheFactory(), true, false, new NullLogger());
     }
 
     #[DataProvider('provideUnsafeIdempotencyStores')]
@@ -536,7 +537,33 @@ final class CoreFactoryTest extends TestCase
         $this->expectException(ConfigurationException::class);
         $this->expectExceptionMessage('The Pey idempotency store ' . $problem . '. Set PEY_IDEMPOTENCY_STORE (config key pey.idempotency.store) to a shared cache store with atomic locks, such as redis or database.');
 
-        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), $testing);
+        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), $testing, false, new NullLogger());
+    }
+
+    #[DataProvider('provideFileStoreEnvironments')]
+    public function testItWarnsAboutAFileIdempotencyStoreInProductionOnly(bool $production, int $warnings): void
+    {
+        config()->set('cache.stores.charges', ['driver' => 'file', 'path' => sys_get_temp_dir() . '/pey-laravel-not-written']);
+        $repository = self::repository(['idempotency' => ['store' => 'charges']], ['stores' => ['charges' => ['driver' => 'file']]]);
+        $logger = new RecordingLogger();
+
+        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), false, $production, $logger);
+
+        self::assertCount($warnings, $logger->records);
+        foreach ($logger->records as $record) {
+            self::assertSame('warning', $record['level']);
+            self::assertStringContainsString('uses the file cache driver, whose locks hold on one server only', $record['message']);
+            self::assertStringContainsString('Set PEY_IDEMPOTENCY_STORE (config key pey.idempotency.store)', $record['message']);
+        }
+    }
+
+    public function testItDoesNotWarnAboutOtherIdempotencyStoresInProduction(): void
+    {
+        $logger = new RecordingLogger();
+
+        CoreFactory::idempotencyStore(self::repository(), $this->cacheFactory(), true, true, $logger);
+
+        self::assertSame([], $logger->records);
     }
 
     // ---------------------------------------------------------------- logger
@@ -657,6 +684,15 @@ final class CoreFactoryTest extends TestCase
         yield 'negative retries' => [['retry' => ['max_retries' => '-1']], 'maxRetries must be between 0 and 10.'];
         yield 'too many retries' => [['retry' => ['max_retries' => 11]], 'maxRetries must be between 0 and 10.'];
         yield 'API key with spaces' => [['api_key' => 'pey test'], 'The Pey API key must be a non-empty string of visible ASCII characters'];
+    }
+
+    /**
+     * @return iterable<string, array{bool, int}>
+     */
+    public static function provideFileStoreEnvironments(): iterable
+    {
+        yield 'production' => [true, 1];
+        yield 'elsewhere' => [false, 0];
     }
 
     /**

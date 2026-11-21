@@ -128,6 +128,25 @@ final class IdempotentRequestsBindingTest extends TestCase
         self::assertStringNotContainsString(self::KEY, $logger->dump());
     }
 
+    public function testAFileStoreInProductionIsUsedWithOneWarningPerProcess(): void
+    {
+        $app = $this->application();
+        $app->instance('env', 'production');
+        config()->set('cache.stores.charges', ['driver' => 'file', 'path' => sys_get_temp_dir() . '/pey-laravel-not-written']);
+        config()->set('pey.idempotency.store', 'charges');
+        $logger = new RecordingLogger();
+        $app->instance(PeyServiceProvider::LOGGER, $logger);
+        Pey::fake();
+
+        $this->idempotentRequests();
+        $this->idempotentRequests();
+
+        self::assertCount(1, $logger->records);
+        [$record] = $logger->records;
+        self::assertSame('warning', $record['level']);
+        self::assertStringContainsString('file cache driver', $record['message']);
+    }
+
     public function testAStoreThatCannotLockAcrossProcessesFailsWhenResolved(): void
     {
         // Testbench's default cache store uses the array driver.

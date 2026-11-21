@@ -108,6 +108,8 @@ final class PeyServiceProvider extends ServiceProvider
             $app->make(Repository::class),
             $app->make(CacheFactory::class),
             $app instanceof Application && $app->runningUnitTests(),
+            $app instanceof Application && $app->environment('production') === true,
+            self::logger($app),
         ));
 
         // An application may bind its own store; IdempotentRequests uses it.
