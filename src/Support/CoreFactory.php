@@ -7,6 +7,7 @@ namespace Dev1\Pey\Laravel\Support;
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Http\RetryPolicy;
+use Dev1\Pey\Idempotency\IdempotentRequests;
 use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
 use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\Security\Secret;
@@ -14,6 +15,7 @@ use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\WebhookVerifier;
 use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\FileStore;
 use Illuminate\Cache\NullStore;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -127,9 +129,13 @@ final class CoreFactory
      * `null` (its lock always succeeds), and `array` outside tests (its lock
      * and records live in one process).
      *
+     * `file` locks hold on one server only. The package cannot tell how many
+     * servers create charges, so in production it logs a warning instead of
+     * refusing the store.
+     *
      * @throws ConfigurationException
      */
-    public static function idempotencyStore(#[\SensitiveParameter] Repository $config, CacheFactory $cache, bool $testing): CacheIdempotencyStore
+    public static function idempotencyStore(#[\SensitiveParameter] Repository $config, CacheFactory $cache, bool $testing, bool $production, LoggerInterface $logger): CacheIdempotencyStore
     {
         $repository = $cache->store(self::cacheStoreName($config, 'pey.idempotency.store'));
         $store = $repository->getStore();
@@ -146,7 +152,26 @@ final class CoreFactory
             throw self::unsafeIdempotencyStore('does not support atomic locks, so two processes could both send the same charge');
         }
 
+        if ($store instanceof FileStore && $production) {
+            $logger->warning('The Pey idempotency store uses the file cache driver, whose locks hold on one server only, so if more than one server creates charges, two of them could both send the same charge. Set PEY_IDEMPOTENCY_STORE (config key pey.idempotency.store) to a shared cache store with atomic locks, such as redis or database.');
+        }
+
         return new CacheIdempotencyStore($repository, $store);
+    }
+
+    /**
+     * How long IdempotentRequests treats an unfinished attempt as still in
+     * progress: the SDK's default, or a minute longer than the configured
+     * HTTP timeout (pey.timeout can be up to 300 seconds), so a request still
+     * in flight is never taken for a crash.
+     *
+     * @throws ConfigurationException
+     */
+    public static function idempotencyStaleAfter(#[\SensitiveParameter] Repository $config): int
+    {
+        $timeout = (int) ceil(self::seconds($config, 'pey.timeout', Config::DEFAULT_TIMEOUT));
+
+        return max(IdempotentRequests::DEFAULT_STALE_AFTER_SECONDS, $timeout + 60);
     }
 
     /**

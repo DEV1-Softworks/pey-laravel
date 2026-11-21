@@ -108,6 +108,8 @@ final class PeyServiceProvider extends ServiceProvider
             $app->make(Repository::class),
             $app->make(CacheFactory::class),
             $app instanceof Application && $app->runningUnitTests(),
+            $app instanceof Application && $app->environment('production') === true,
+            self::logger($app),
         ));
 
         // An application may bind its own store; IdempotentRequests uses it.
@@ -118,6 +120,7 @@ final class PeyServiceProvider extends ServiceProvider
         $this->app->bind(IdempotentRequests::class, static fn(Container $app): IdempotentRequests => new IdempotentRequests(
             $app->make(PeyClientInterface::class),
             $app->make(IdempotencyStore::class),
+            staleAfterSeconds: CoreFactory::idempotencyStaleAfter($app->make(Repository::class)),
             clock: $app->make(ClockInterface::class),
             logger: self::logger($app),
         ));

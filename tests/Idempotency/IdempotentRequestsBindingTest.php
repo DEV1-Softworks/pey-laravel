@@ -92,8 +92,9 @@ final class IdempotentRequestsBindingTest extends TestCase
      * @param class-string<\Throwable> $expected
      */
     #[DataProvider('provideTimesInFlight')]
-    public function testStalenessFollowsTheLaravelClock(int $seconds, string $expected): void
+    public function testStalenessFollowsTheLaravelClockAndTheTimeout(?int $timeout, int $seconds, string $expected): void
     {
+        config()->set('pey.timeout', $timeout);
         $this->freezeTime();
         $caught = null;
         $this->application()->instance(PeyClientInterface::class, new ReentrantPeyClient(function (CreateQrRequest $request) use ($seconds, &$caught): QrCode {
@@ -126,6 +127,25 @@ final class IdempotentRequestsBindingTest extends TestCase
         self::assertSame('notice', $record['level']);
         self::assertStringContainsString('released by the application', $record['message']);
         self::assertStringNotContainsString(self::KEY, $logger->dump());
+    }
+
+    public function testAFileStoreInProductionIsUsedWithOneWarningPerProcess(): void
+    {
+        $app = $this->application();
+        $app->instance('env', 'production');
+        config()->set('cache.stores.charges', ['driver' => 'file', 'path' => sys_get_temp_dir() . '/pey-laravel-not-written']);
+        config()->set('pey.idempotency.store', 'charges');
+        $logger = new RecordingLogger();
+        $app->instance(PeyServiceProvider::LOGGER, $logger);
+        Pey::fake();
+
+        $this->idempotentRequests();
+        $this->idempotentRequests();
+
+        self::assertCount(1, $logger->records);
+        [$record] = $logger->records;
+        self::assertSame('warning', $record['level']);
+        self::assertStringContainsString('file cache driver', $record['message']);
     }
 
     public function testAStoreThatCannotLockAcrossProcessesFailsWhenResolved(): void
@@ -164,12 +184,15 @@ final class IdempotentRequestsBindingTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{int, class-string<\Throwable>}>
+     * @return iterable<string, array{int|null, int, class-string<\Throwable>}>
      */
     public static function provideTimesInFlight(): iterable
     {
-        yield 'still in progress' => [IdempotentRequests::DEFAULT_STALE_AFTER_SECONDS - 1, IdempotencyInProgressException::class];
-        yield 'stale' => [IdempotentRequests::DEFAULT_STALE_AFTER_SECONDS + 1, IdempotencyOutcomeUnknownException::class];
+        yield 'default timeout, still in progress' => [null, IdempotentRequests::DEFAULT_STALE_AFTER_SECONDS - 1, IdempotencyInProgressException::class];
+        yield 'default timeout, stale' => [null, IdempotentRequests::DEFAULT_STALE_AFTER_SECONDS + 1, IdempotencyOutcomeUnknownException::class];
+        // At the maximum timeout, a request can still be in flight at 300 s.
+        yield 'maximum timeout, still in progress at 301 s' => [300, 301, IdempotencyInProgressException::class];
+        yield 'maximum timeout, stale after 360 s' => [300, 361, IdempotencyOutcomeUnknownException::class];
     }
 
     private function idempotentRequests(): IdempotentRequests

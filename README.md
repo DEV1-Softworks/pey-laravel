@@ -108,7 +108,11 @@ Derive keys from your own ids, so every retry of the same order uses the same ke
 - `null`;
 - `array` outside tests.
 
-`file` locks hold on a single server only.
+`file` locks hold on a single server only. In production, the package logs a warning when it resolves a `file` store; set `PEY_IDEMPOTENCY_STORE=database` to use the cache table that ships with Laravel, while the rest of your cache stays on `file`.
+
+**Retention and retries.** A key is remembered for 7 days. After that, the same key is free and a call sends again. A job retried later than that, for example with `php artisan queue:retry` on an old failed job, is no longer protected. Prune or reconcile failed charge jobs within 7 days.
+
+An attempt that never finished counts as "in progress" for 5 minutes, or a minute longer than `PEY_TIMEOUT` when that is longer. After that its outcome is unknown and the key stays blocked until you reconcile it.
 
 In tests, `Pey::fake()` applies to `IdempotentRequests` too: resolve it after faking.
 
