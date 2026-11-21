@@ -81,6 +81,37 @@ final class FulfilQrOrder implements ShouldQueue
 
 **Personal data in queues.** A queued listener stores its event in the queue payload (and in `failed_jobs` if it fails). Events never carry the raw body, the headers or a secret. But `BankAccountUpdated` carries the account's full CLABE, the holder's name and their RFC, and `UnknownPeyEvent` carries the whole decoded body. Protect the queue storage like your database, and mask CLABEs with `Dev1\Pey\Validation\Clabe::mask()` before logging them.
 
+## Idempotency
+
+Pey has no idempotency keys, so a double click, a queue retry or a retry after a timeout can create a second charge. The SDK's `IdempotentRequests` calls Pey at most once per key. This package binds it on a Laravel cache store:
+
+```php
+use Dev1\Pey\Dto\Request\CreateQrRequest;
+use Dev1\Pey\Idempotency\IdempotentRequests;
+
+public function store(Order $order, IdempotentRequests $idempotent)
+{
+    $qr = $idempotent->createQr("order-{$order->id}:qr", new CreateQrRequest($order->total, concept: "Order {$order->id}"));
+    // Calling again with the same key returns the same QR without calling Pey.
+}
+```
+
+Derive keys from your own ids, so every retry of the same order uses the same key. The SDK's [idempotency guide](https://github.com/DEV1-Softworks/pey-php-sdk/blob/master/docs/idempotency.md) explains each outcome. It also covers what to do when an outcome is unknown, where the key stays blocked until you reconcile it and call `release()`.
+
+**The store.** Records are kept in `PEY_IDEMPOTENCY_STORE`, or the default cache store when it is unset.
+- **Shared.** Every process that creates charges must share it.
+- **Atomic locks.** The package takes `Cache::lock()` on each key.
+- **No early eviction.** A record evicted before its 7 days allows a duplicate charge.
+
+`database`, or a Redis database with `noeviction`, fits. The package refuses three kinds of store when it is first resolved:
+- a store without locks;
+- `null`;
+- `array` outside tests.
+
+`file` locks hold on a single server only.
+
+In tests, `Pey::fake()` applies to `IdempotentRequests` too: resolve it after faking.
+
 ## Requirements
 
 - PHP 8.2 or later (Laravel 13 needs PHP 8.3 or later)

@@ -23,6 +23,8 @@
   - Build bodies with `tests/Support/WebhookBodies.php` (the core fake's simulations), and sign and post them with the `PostsPeyWebhooks` trait. Never hand-write a payload shape.
   - Laravel skips CSRF verification while unit tests run. Prove a CSRF exclusion on the route's resolved middleware, not over HTTP.
 - **Idempotency store**: equivalent of the core's store contract tests (atomic acquire, remember, release, recall, TTL), run against a lock-capable cache driver in Testbench. A store without atomic locks is refused.
+  - `CacheIdempotencyStoreContractTestCase` holds the contract. Its subclasses run it on `array`, `file` (a temporary directory) and `database` (Testbench's SQLite, with `#[WithMigration('cache')]`).
+  - Lock waits use `Sleep::fake(syncWithCarbon: true)`, never a real sleep.
 - **Commands**: non-zero exit codes on failure. Output contains no key, no full CLABE and no response body.
 
 ## Coverage
