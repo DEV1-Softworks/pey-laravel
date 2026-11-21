@@ -28,7 +28,9 @@
         "dev1/pey-php-sdk": "^0.1.1",
         "guzzlehttp/guzzle": "^7.9 || ^8.0",
         "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/http": "^12.0 || ^13.0",
         "illuminate/log": "^12.0 || ^13.0",
+        "illuminate/routing": "^12.0 || ^13.0",
         "illuminate/support": "^12.0 || ^13.0",
         "psr/clock": "^1.0",
         "psr/log": "^2.0 || ^3.0"
