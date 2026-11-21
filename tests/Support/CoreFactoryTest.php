@@ -580,6 +580,27 @@ final class CoreFactoryTest extends TestCase
         CoreFactory::idempotencyStaleAfter(self::repository(['timeout' => 'soon']));
     }
 
+    public function testTheCurrentWebhookSecretIsTheFirstConfiguredOne(): void
+    {
+        $secret = CoreFactory::currentWebhookSecret(self::repository(['webhooks' => ['secrets' => [null, TestSecrets::webhookSecret(), TestSecrets::previousWebhookSecret()]]]));
+
+        self::assertNotNull($secret);
+        self::assertSame(TestSecrets::webhookSecret(), $secret->reveal());
+    }
+
+    public function testThereIsNoCurrentWebhookSecretWhenNoneIsConfigured(): void
+    {
+        self::assertNull(CoreFactory::currentWebhookSecret(self::repository()));
+    }
+
+    public function testTheCurrentWebhookSecretNeedsAListOfStrings(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.webhooks.secrets setting (PEY_WEBHOOK_SECRET) must be a list of strings.');
+
+        CoreFactory::currentWebhookSecret(self::repository(['webhooks' => ['secrets' => 42]]));
+    }
+
     // ---------------------------------------------------------------- logger
 
     public function testItUsesTheDefaultLogChannelWhenNoneIsConfigured(): void

@@ -224,6 +224,17 @@ final class CoreFactory
     }
 
     /**
+     * The webhook secret new webhooks are signed with (the first configured
+     * one), or null when none is configured.
+     *
+     * @throws ConfigurationException when the setting has the wrong type
+     */
+    public static function currentWebhookSecret(#[\SensitiveParameter] Repository $config): ?Secret
+    {
+        return self::webhookSecrets($config)[0] ?? null;
+    }
+
+    /**
      * The configured log channel, or the default channel.
      *
      * @throws ConfigurationException

@@ -29,9 +29,11 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 | `Webhooks\Event\WebhookEvent` | `WebhookEvents::for()` | Open interface: a type from a newer core gets only `PeyWebhookReceived`. |
 | `Idempotency\IdempotencyStore` | implemented by `CacheIdempotencyStore`, bound as a singleton | `acquire` (atomic) / `remember` / `release` / `recall`. An application's own binding wins. |
 | `Idempotency\IdempotentRequests` | bound non-shared | Built with the bound client and store, the container clock (staleness follows `travelTo()`) and the Pey log channel. Retention is the core's 7 days. `staleAfterSeconds` is `max(300, ceil(pey.timeout) + 60)`: the core requires it to exceed the HTTP timeout, which `Config` allows up to 300 s. The bridge exposes no setting for either. |
-| `Testing\FakePeyClient`, `RecordedCall` | `Pey::fake()`, `Pey::recordedCalls()`, `Pey::callsTo()` | Built as `new FakePeyClient(allowedClabes, ClockInterface)` from `pey.allowed_clabes` (or the given list) and the container clock. Calls are read through `recordedCalls()` and `callsTo()`. |
+| `Testing\FakePeyClient`, `RecordedCall` | `Pey::fake()`, `Pey::recordedCalls()`, `Pey::callsTo()`, and the `pey:webhook:sign` samples (`Console\WebhookSamples`, from its simulations) | Built as `new FakePeyClient(allowedClabes, ClockInterface)` from `pey.allowed_clabes` (or the given list) and the container clock. Calls are read through `recordedCalls()` and `callsTo()`. |
 | `Testing\WebhookSigner`, `SignedWebhook` | `pey:webhook:sign`, `InteractsWithPey` | Pass the timestamp from the Laravel clock. The signer defaults to `time()`. |
 | `Validation\Clabe::mask()` | CLABEs in logs and output | |
+| `Resources\TransactionsInterface::listForApiKey()` | `pey:check` | First page only. A success exposes no HTTP status, so `pey:check` prints "2xx". |
+| `Exception\PeyException::httpStatus()`, `errorType()`, `requestId()` | `pey:check` failures | Never `getMessage()` of an `ApiException`: it carries Pey's error message. |
 | `Version::VERSION` | `php artisan about` | |
 
 ## Dependencies the core pulls in
@@ -46,6 +48,7 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
    - Needed by `pey:webhook:sign {event}` and `InteractsWithPey::postPeyWebhook(object $coreEvent)`.
    - The core only parses bodies into events (`EventFactory`, internal), and its sample payloads are in `tests/Fixtures`, which is not shipped.
    - Proposal: `Testing\WebhookPayloads::fromEvent(WebhookEvent): string` and `::sample(string $type): string`.
+   - `pey:webhook:sign` is covered: it uses the simulations below.
    - Partial workaround: `FakePeyClient`'s simulations (`simulateQrPayment()`, `simulatePushNotificationPayment()`, `simulatePaymentLinkPayment()`, `activateBankAccount()`) return documented bodies for every modelled type. The bridge's tests use them (`tests/Support/WebhookBodies.php`), and `pey:webhook:sign {event}` can too. `postPeyWebhook(object $coreEvent)` still needs `fromEvent()`.
 2. **Store contract tests.** Covered on the bridge side by `tests/Idempotency/CacheIdempotencyStoreContractTestCase.php`, run on the array, file and database drivers.
    - The core's idempotency store tests live in `tests/`, which is not shipped, so the bridge keeps equivalent tests.
@@ -53,3 +56,4 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 3. **Personal data in queued events.** Resolved without a core change.
    - `BankAccountUpdated::$clabe` is the full CLABE, and `UnknownEvent::$payload` is the whole verified body, decoded. Both end up in queue payloads when listeners are queued.
    - The maintainer chose (2026-11-20) to document it on the Laravel events and in the README rather than filter the core objects.
+4. **Status of a successful response (optional).** `pey:check` prints "HTTP 2xx" because the core accepts any 2xx and does not expose which one. The exact status is only in a debug log record, which is not a contract. If it matters, the core could expose it on its result objects or through a documented log context.

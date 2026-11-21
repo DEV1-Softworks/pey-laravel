@@ -63,7 +63,19 @@ These apply on top of the core's rules (`dev1/pey-php-sdk`, `.claude/rules/secur
 - The stale window passed to `IdempotentRequests` must outlast the HTTP timeout: `max(300, ceil(pey.timeout) + 60)`. `pey.timeout` can be up to 300 seconds.
 - `IdempotentRequests` is bound non-shared, so an instance resolved after `Pey::fake()` never wraps the real client.
 
-## 7. No secrets in the repository
+## 7. Console commands
+
+- `pey:check` prints configured/missing and counts (`CoreFactory::about()`), never a value.
+  - It prints messages only from exceptions whose messages never carry a secret or a response body: `ConfigurationException`, `NetworkException` (the core sanitizes the cause) and `UnexpectedResponseException` (a field name, never a value).
+  - For other `PeyException`s it prints the class, the HTTP status, the error type and the request id, never `getMessage()`, which holds Pey's error message.
+  - For anything else, it prints the class only.
+- `pey:webhook:sign` handles the webhook secret like this:
+  - It is registered only in `local` and `testing`, and refuses to run anywhere else.
+  - It keeps the secret in a `Secret` until it signs, validates its format with the core's `WebhookVerifier` (the signer accepts malformed secrets), and never prints it.
+  - It catches signer failures without printing them, because the library does not mark its secret parameter as sensitive.
+- Its samples come from `FakePeyClient`'s simulations, with obviously fake data. The bank account sample's CLABE is masked with `Clabe::mask()`.
+
+## 8. No secrets in the repository
 
 - `.env*` and `CLAUDE.local.md` are gitignored, and gitleaks scans the full history in CI.
 - Fixtures use obviously fake values: `pey_test_not_a_real_value`, and `whsec_` + base64 of a readable test string.

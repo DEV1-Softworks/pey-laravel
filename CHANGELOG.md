@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Console:
+  - `pey:check` shows the configuration summary and validates the client, the webhook verifier and dedup store (when a secret is set) and the idempotency store. It then calls `GET /transaction/api-key` once, first page only. It exits 1 on any failure, and never prints a secret, a CLABE or a response body.
+  - `pey:webhook:sign {event}`, in the local and testing environments only, prints a sample webhook signed with the configured secret (or `--secret`), and a curl command that posts it to the `pey.webhooks` route.
+- Requires `illuminate/console`.
 - Idempotency:
   - `CacheIdempotencyStore` implements the SDK's `IdempotencyStore` on the cache store `pey.idempotency.store` (the default store when unset). `acquire()` takes `Cache::lock()` on the key and then calls `add()`. Storage errors are thrown.
   - Stores that cannot lock across processes are refused when resolved: no locks, `null`, or `array` outside tests.

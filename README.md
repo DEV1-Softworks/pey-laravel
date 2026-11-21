@@ -116,6 +116,29 @@ An attempt that never finished counts as "in progress" for 5 minutes, or a minut
 
 In tests, `Pey::fake()` applies to `IdempotentRequests` too: resolve it after faking.
 
+## Console
+
+```bash
+php artisan pey:check
+```
+
+`pey:check` exits 1 when anything fails, so you can run it in CI or after a deploy. It works in this order:
+1. **Configuration.** It shows the summary that `php artisan about` shows: whether the key is configured, plus counts.
+2. **Validation.** It checks the client configuration, the idempotency store, and the webhook verifier and dedup store (when a webhook secret is set).
+3. **API call.** It calls `GET /transaction/api-key` once, first page only, and prints the number of transactions on that page.
+
+It never prints the API key, a webhook secret, a CLABE or a response body. On an API error it prints the HTTP status, Pey's error type and the request id. Pey has no sandbox, so the API call reaches production with your key. It is read-only.
+
+```bash
+php artisan pey:webhook:sign codi.qr.payment_received
+```
+
+`pey:webhook:sign` prints a sample webhook in Pey's documented shape, signed with `PEY_WEBHOOK_SECRET`. It also prints a curl command that posts it to your `pey.webhooks` route.
+- **Types:** `codi.qr.payment_received`, `codi.pn.payment_received`, `payment_link.status_updated` and `bank.account.updated`.
+- **Options:** `--secret=` signs with another `whsec_` secret, `--id=` sets the `webhook-id`, and `--url=` sets the URL in the curl command.
+- **Duplicates:** running the printed command twice sends the same `webhook-id`, so the second delivery is answered as a duplicate.
+- **Environments:** it exists only in the `local` and `testing` environments.
+
 ## Requirements
 
 - PHP 8.2 or later (Laravel 13 needs PHP 8.3 or later)
