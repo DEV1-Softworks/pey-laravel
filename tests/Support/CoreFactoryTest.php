@@ -566,6 +566,20 @@ final class CoreFactoryTest extends TestCase
         self::assertSame([], $logger->records);
     }
 
+    #[DataProvider('provideTimeouts')]
+    public function testTheStaleWindowOutlastsTheHttpTimeout(mixed $timeout, int $staleAfter): void
+    {
+        self::assertSame($staleAfter, CoreFactory::idempotencyStaleAfter(self::repository(['timeout' => $timeout])));
+    }
+
+    public function testTheStaleWindowNeedsAValidTimeout(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.timeout setting (PEY_TIMEOUT) must be a number of seconds.');
+
+        CoreFactory::idempotencyStaleAfter(self::repository(['timeout' => 'soon']));
+    }
+
     // ---------------------------------------------------------------- logger
 
     public function testItUsesTheDefaultLogChannelWhenNoneIsConfigured(): void
@@ -693,6 +707,19 @@ final class CoreFactoryTest extends TestCase
     {
         yield 'production' => [true, 1];
         yield 'elsewhere' => [false, 0];
+    }
+
+    /**
+     * @return iterable<string, array{mixed, int}>
+     */
+    public static function provideTimeouts(): iterable
+    {
+        yield 'unset (15 s)' => [null, 300];
+        yield '15 s' => ['15', 300];
+        yield '240 s' => [240, 300];
+        yield '241 s' => [241, 301];
+        yield '299.5 s' => ['299.5', 360];
+        yield '300 s, the maximum' => [300.0, 360];
     }
 
     /**

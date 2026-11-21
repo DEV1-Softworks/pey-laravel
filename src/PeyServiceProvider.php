@@ -120,6 +120,7 @@ final class PeyServiceProvider extends ServiceProvider
         $this->app->bind(IdempotentRequests::class, static fn(Container $app): IdempotentRequests => new IdempotentRequests(
             $app->make(PeyClientInterface::class),
             $app->make(IdempotencyStore::class),
+            staleAfterSeconds: CoreFactory::idempotencyStaleAfter($app->make(Repository::class)),
             clock: $app->make(ClockInterface::class),
             logger: self::logger($app),
         ));

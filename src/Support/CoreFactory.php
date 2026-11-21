@@ -7,6 +7,7 @@ namespace Dev1\Pey\Laravel\Support;
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Http\RetryPolicy;
+use Dev1\Pey\Idempotency\IdempotentRequests;
 use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
 use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\Security\Secret;
@@ -156,6 +157,21 @@ final class CoreFactory
         }
 
         return new CacheIdempotencyStore($repository, $store);
+    }
+
+    /**
+     * How long IdempotentRequests treats an unfinished attempt as still in
+     * progress: the SDK's default, or a minute longer than the configured
+     * HTTP timeout (pey.timeout can be up to 300 seconds), so a request still
+     * in flight is never taken for a crash.
+     *
+     * @throws ConfigurationException
+     */
+    public static function idempotencyStaleAfter(#[\SensitiveParameter] Repository $config): int
+    {
+        $timeout = (int) ceil(self::seconds($config, 'pey.timeout', Config::DEFAULT_TIMEOUT));
+
+        return max(IdempotentRequests::DEFAULT_STALE_AFTER_SECONDS, $timeout + 60);
     }
 
     /**
