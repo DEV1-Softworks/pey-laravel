@@ -7,10 +7,12 @@ namespace Dev1\Pey\Laravel\Support;
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Http\RetryPolicy;
+use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\Security\Secret;
 use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\WebhookVerifier;
+use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Log\LogManager;
 use Psr\Clock\ClockInterface;
@@ -43,6 +45,8 @@ final class CoreFactory
         'pey.allowed_clabes' => 'PEY_ALLOWED_CLABES',
         'pey.webhooks.secrets' => 'PEY_WEBHOOK_SECRET',
         'pey.webhooks.tolerance' => 'PEY_WEBHOOK_TOLERANCE',
+        'pey.webhooks.dedup_store' => 'PEY_WEBHOOK_DEDUP_STORE',
+        'pey.webhooks.dedup_ttl' => 'PEY_WEBHOOK_DEDUP_TTL',
         'pey.log_channel' => 'PEY_LOG_CHANNEL',
     ];
 
@@ -79,6 +83,72 @@ final class CoreFactory
             self::integer($config, 'pey.webhooks.tolerance', WebhookVerifier::DEFAULT_TOLERANCE_SECONDS),
             $clock,
         );
+    }
+
+    /**
+     * The store that remembers webhook ids: `pey.webhooks.dedup_store`, or
+     * the default cache store.
+     *
+     * @throws ConfigurationException when the store is undefined or uses the null driver, or the TTL is invalid
+     */
+    public static function webhookDeduplicator(#[\SensitiveParameter] Repository $config, CacheFactory $cache): WebhookDeduplicator
+    {
+        $name = self::optionalString($config, 'pey.webhooks.dedup_store');
+        if ($name !== null && !\is_array($config->get('cache.stores.' . $name))) {
+            throw ConfigurationException::because('The pey.webhooks.dedup_store setting (PEY_WEBHOOK_DEDUP_STORE) names a cache store that config/cache.php does not define.');
+        }
+
+        if (self::dedupDriver($config, $name) === 'null') {
+            throw ConfigurationException::because('The Pey webhook dedup store uses the null cache driver, which stores nothing, so every webhook would be ignored as a duplicate. Set PEY_WEBHOOK_DEDUP_STORE (config key pey.webhooks.dedup_store) to a shared cache store.');
+        }
+
+        $ttl = self::integer($config, 'pey.webhooks.dedup_ttl', WebhookDeduplicator::DEFAULT_TTL_SECONDS);
+        if ($ttl < 1) {
+            throw self::invalid('pey.webhooks.dedup_ttl', 'a positive number of seconds');
+        }
+
+        // A replay is accepted while its timestamp is within the tolerance of
+        // now, in either direction, so its id must be remembered that long.
+        if ($ttl < 2 * self::integer($config, 'pey.webhooks.tolerance', WebhookVerifier::DEFAULT_TOLERANCE_SECONDS)) {
+            throw self::invalid('pey.webhooks.dedup_ttl', 'at least twice pey.webhooks.tolerance, so a replayed webhook is still recognized as a duplicate');
+        }
+
+        return new WebhookDeduplicator($cache->store($name), $ttl);
+    }
+
+    /**
+     * Why the webhook dedup store cannot recognize a repeated delivery, or
+     * null. The provider logs it at boot, so it reads config only: it never
+     * builds the store and never throws. Without a webhook secret, webhooks
+     * are not in use and there is nothing to report.
+     *
+     * - `array` keeps ids in one process's memory. It is fine in tests only.
+     * - `file` is local to one server, which production rarely is.
+     * - `null` stores nothing: every webhook would be ignored as a duplicate.
+     */
+    public static function dedupStoreWarning(#[\SensitiveParameter] Repository $config, bool $production, bool $testing): ?string
+    {
+        try {
+            if (self::webhookSecrets($config) === []) {
+                return null;
+            }
+
+            $driver = self::dedupDriver($config, self::optionalString($config, 'pey.webhooks.dedup_store'));
+        } catch (ConfigurationException) {
+            // Reported when a webhook arrives and the store is resolved.
+            return null;
+        }
+
+        $problem = match (true) {
+            $driver === 'array' && !$testing => 'uses the array cache driver, which keeps ids in the memory of one process, so a webhook Pey delivers twice can be dispatched twice',
+            $driver === 'file' && $production => 'uses the file cache driver, which is local to one server, so a webhook Pey delivers twice can be dispatched twice behind a load balancer',
+            $driver === 'null' => 'uses the null cache driver, which stores nothing, so every webhook would be ignored as a duplicate',
+            default => null,
+        };
+
+        return $problem === null
+            ? null
+            : 'The Pey webhook dedup store ' . $problem . '. Set PEY_WEBHOOK_DEDUP_STORE (config key pey.webhooks.dedup_store) to a shared cache store such as redis or database.';
     }
 
     /**
@@ -246,6 +316,16 @@ final class CoreFactory
         }
 
         return $secrets;
+    }
+
+    /**
+     * The driver of the named cache store, or of the default store.
+     */
+    private static function dedupDriver(#[\SensitiveParameter] Repository $config, ?string $store): mixed
+    {
+        $store ??= $config->get('cache.default');
+
+        return \is_string($store) ? $config->get('cache.stores.' . $store . '.driver') : null;
     }
 
     /**

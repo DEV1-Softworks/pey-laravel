@@ -6,6 +6,7 @@ namespace Dev1\Pey\Laravel\Tests;
 
 use Dev1\Pey\Config;
 use Dev1\Pey\Http\RetryPolicy;
+use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\Webhooks\WebhookVerifier;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\TestCase as PHPUnitTestCase;
@@ -64,7 +65,7 @@ final class ConfigFileTest extends PHPUnitTestCase
         self::assertSame('', $config['allowed_clabes'] ?? null);
         self::assertSame([null, null], $webhooks['secrets'] ?? null);
         self::assertSame(WebhookVerifier::DEFAULT_TOLERANCE_SECONDS, $webhooks['tolerance'] ?? null);
-        self::assertSame(72 * 3600, $webhooks['dedup_ttl'] ?? null);
+        self::assertSame(WebhookDeduplicator::DEFAULT_TTL_SECONDS, $webhooks['dedup_ttl'] ?? null);
     }
 
     public function testItReadsEveryValueFromTheEnvironment(): void
