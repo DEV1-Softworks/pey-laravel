@@ -36,6 +36,9 @@
 - Use native types everywhere. Add PHPDoc only for array shapes, `list<T>`, generics and `@throws`.
 - `config()` returns `mixed`. Narrow it explicitly (`is_string`, `is_numeric`, …) before use, and report bad types as a `ConfigurationException` that names the config key.
 - PHPStan runs at level max with strict rules and Larastan, with **no baseline**. Never add `ignoreErrors`. An inline `@phpstan-ignore <identifier>` needs a comment explaining why, and must be pointed out in the PR.
+- `testbench.yaml` registers the provider, so Larastan boots the package as an application would: it knows the `Route::peyWebhooks()` macro and the container's concrete types.
+  - Those types can differ between Laravel 12 and 13. Narrow a container result through a function that takes `mixed`, not with `assert()`, which can be "always true" on one major only.
+  - Larastan knows macros on facades (`Route::peyWebhooks()`), not on a `Router` instance.
 
 ## Formatting
 

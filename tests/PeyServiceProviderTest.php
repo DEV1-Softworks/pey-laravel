@@ -7,27 +7,38 @@ namespace Dev1\Pey\Laravel\Tests;
 use Dev1\Pey\Config;
 use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
+use Dev1\Pey\Laravel\Http\Controllers\PeyWebhookController;
+use Dev1\Pey\Laravel\Http\Middleware\VerifyPeyWebhook;
 use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Support\CoreFactory;
+use Dev1\Pey\Laravel\Tests\Support\RecordingLogger;
 use Dev1\Pey\Laravel\Tests\Support\TestSecrets;
+use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\PeyClient;
 use Dev1\Pey\PeyClientInterface;
 use Dev1\Pey\Testing\WebhookSigner;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\WebhookVerifier;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Psr\Clock\ClockInterface;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Response;
 
 #[CoversClass(PeyServiceProvider::class)]
 #[UsesClass(CoreFactory::class)]
 #[UsesClass(LaravelClock::class)]
+#[UsesClass(VerifyPeyWebhook::class)]
+#[UsesClass(WebhookDeduplicator::class)]
 final class PeyServiceProviderTest extends TestCase
 {
     public function testItIsRegisteredWhenTheApplicationBoots(): void
@@ -154,7 +165,9 @@ final class PeyServiceProviderTest extends TestCase
 
     public function testTheClockIsLaravelsByDefault(): void
     {
-        self::assertInstanceOf(LaravelClock::class, $this->application()->make(ClockInterface::class));
+        $this->travelTo(new \DateTimeImmutable('2031-05-06 07:08:09 UTC'));
+
+        self::assertSame('2031-05-06T07:08:09+00:00', $this->application()->make(ClockInterface::class)->now()->format(\DATE_ATOM));
     }
 
     public function testAnApplicationClockIsNeverReplaced(): void
@@ -180,6 +193,120 @@ final class PeyServiceProviderTest extends TestCase
         self::assertSame(Log::channel('single'), $this->application()->make(PeyServiceProvider::LOGGER));
     }
 
+    public function testTheWebhookDedupStoreIsASingletonBuiltFromLaravelConfig(): void
+    {
+        $app = $this->application();
+
+        $deduplicator = $app->make(WebhookDeduplicator::class);
+
+        self::assertSame($deduplicator, $app->make(WebhookDeduplicator::class));
+        self::assertTrue($deduplicator->claim('msg_provider'));
+        self::assertFalse($deduplicator->claim('msg_provider'));
+    }
+
+    public function testOnlyTheWebhookMiddlewareGetsThePeyLogChannel(): void
+    {
+        $this->configure(['pey.webhooks.secrets' => [TestSecrets::webhookSecret()]]);
+        $app = $this->application();
+        $logger = new RecordingLogger();
+        $app->instance(PeyServiceProvider::LOGGER, $logger);
+
+        $response = $app->make(VerifyPeyWebhook::class)->handle(Request::create('/webhooks/pey', 'POST'), static fn(): Response => new Response());
+
+        self::assertSame(Response::HTTP_BAD_REQUEST, $response->getStatusCode());
+        self::assertCount(1, $logger->records);
+        // Laravel's own PSR-3 binding is untouched.
+        self::assertSame('log', $app->getAlias(LoggerInterface::class));
+    }
+
+    // -------------------------------------------------------- webhook route
+
+    public function testTheWebhookMacroRegistersAVerifiedPostRoute(): void
+    {
+        $route = Route::peyWebhooks();
+
+        self::assertSame(['POST'], $route->methods());
+        self::assertSame('webhooks/pey', $route->uri());
+        self::assertSame(PeyServiceProvider::WEBHOOK_ROUTE, $route->getName());
+        self::assertSame(PeyWebhookController::class, $route->getControllerClass());
+        self::assertSame([VerifyPeyWebhook::class], $route->middleware());
+    }
+
+    public function testTheWebhookRouteTakesAnyUri(): void
+    {
+        self::assertSame('hooks/pey/live', Route::peyWebhooks('/hooks/pey/live')->uri());
+    }
+
+    /**
+     * Laravel skips CSRF verification while unit tests run, so HTTP tests
+     * cannot prove the exclusion. The route's resolved middleware can.
+     */
+    public function testTheWebhookRouteSkipsCsrfVerificationInTheWebGroup(): void
+    {
+        $app = $this->application();
+        // The HTTP kernel gives the router its middleware groups.
+        $app->make(HttpKernel::class);
+
+        $webhook = $plain = null;
+        Route::middleware('web')->group(static function () use (&$webhook, &$plain): void {
+            $webhook = Route::peyWebhooks();
+            $plain = Route::post('/pey-laravel-test/plain', static fn(): string => 'ok');
+        });
+        self::assertInstanceOf(\Illuminate\Routing\Route::class, $webhook);
+        self::assertInstanceOf(\Illuminate\Routing\Route::class, $plain);
+
+        $router = $app->make(Router::class);
+        $csrf = static fn(\Illuminate\Routing\Route $route): array => array_values(array_filter(
+            $router->gatherRouteMiddleware($route),
+            static fn(mixed $name): bool => \is_string($name) && preg_match('/Csrf|RequestForgery/', $name) === 1,
+        ));
+
+        self::assertNotSame([], $csrf($plain), 'The web group must verify CSRF tokens on other routes.');
+        self::assertSame([], $csrf($webhook));
+        self::assertContains(VerifyPeyWebhook::class, $router->gatherRouteMiddleware($webhook));
+    }
+
+    public function testTheWebhookRouteIsListed(): void
+    {
+        Route::peyWebhooks();
+
+        self::assertSame(0, Artisan::call('route:list', ['--name' => PeyServiceProvider::WEBHOOK_ROUTE]));
+        self::assertStringContainsString('webhooks/pey', Artisan::output());
+    }
+
+    // ------------------------------------------------------- boot warning
+
+    public function testItWarnsAtBootWhenTheDedupStoreCannotRecognizeDuplicates(): void
+    {
+        $logger = $this->bootWithWebhooksOutsideTests();
+
+        self::assertCount(1, $logger->records);
+        self::assertSame('warning', $logger->records[0]['level']);
+        self::assertStringContainsString('uses the array cache driver', $logger->records[0]['message']);
+        self::assertStringNotContainsString(TestSecrets::webhookSecret(), $logger->dump());
+    }
+
+    public function testItDoesNotWarnInTests(): void
+    {
+        $this->configure(['pey.webhooks.secrets' => [TestSecrets::webhookSecret()]]);
+        $app = $this->application();
+        $logger = new RecordingLogger();
+        $app->instance(PeyServiceProvider::LOGGER, $logger);
+
+        (new PeyServiceProvider($app))->boot();
+
+        self::assertSame([], $logger->records);
+    }
+
+    public function testTheBootWarningNeverBreaksTheBoot(): void
+    {
+        $this->configure(['pey.log_channel' => 42]);
+
+        $this->bootWithWebhooksOutsideTests(bindLogger: false);
+
+        self::assertTrue(Router::hasMacro('peyWebhooks'));
+    }
+
     public function testTheConfigFileIsPublishedWithThePeyConfigTag(): void
     {
         $paths = ServiceProvider::pathsToPublish(PeyServiceProvider::class, 'pey-config');
@@ -199,6 +326,7 @@ final class PeyServiceProviderTest extends TestCase
         yield 'client interface' => [PeyClientInterface::class];
         yield 'webhook verifier' => [WebhookVerifier::class];
         yield 'logger' => [PeyServiceProvider::LOGGER];
+        yield 'webhook dedup store' => [WebhookDeduplicator::class];
     }
 
     /**
@@ -217,6 +345,25 @@ final class PeyServiceProviderTest extends TestCase
         foreach ($settings as $key => $value) {
             config()->set($key, $value);
         }
+    }
+
+    /**
+     * Boots the provider again in the local environment, with a webhook
+     * secret and Testbench's array cache.
+     */
+    private function bootWithWebhooksOutsideTests(bool $bindLogger = true): RecordingLogger
+    {
+        $app = $this->application();
+        $app->instance('env', 'local');
+        $this->configure(['pey.webhooks.secrets' => [TestSecrets::webhookSecret(), null]]);
+        $logger = new RecordingLogger();
+        if ($bindLogger) {
+            $app->instance(PeyServiceProvider::LOGGER, $logger);
+        }
+
+        (new PeyServiceProvider($app))->boot();
+
+        return $logger;
     }
 
     /**

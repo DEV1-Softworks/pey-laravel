@@ -20,6 +20,8 @@
 - **Secrets**: for every object, log record, event, command output and exception that could carry the API key or a webhook secret, assert the secret is absent. Check `serialize()` (or that it throws), `var_export`, `print_r`, `json_encode`, and logged context.
 - **Events**: serialize every event class (as Laravel's queue would) and assert the payload contains no secret and no raw body.
 - **Webhooks**: a tampered body, a wrong secret, a stale or future timestamp and missing headers are rejected with `400` before anything parses the body. Duplicates dispatch nothing.
+  - Build bodies with `tests/Support/WebhookBodies.php` (the core fake's simulations), and sign and post them with the `PostsPeyWebhooks` trait. Never hand-write a payload shape.
+  - Laravel skips CSRF verification while unit tests run. Prove a CSRF exclusion on the route's resolved middleware, not over HTTP.
 - **Idempotency store**: equivalent of the core's store contract tests (atomic acquire, remember, release, recall, TTL), run against a lock-capable cache driver in Testbench. A store without atomic locks is refused.
 - **Commands**: non-zero exit codes on failure. Output contains no key, no full CLABE and no response body.
 

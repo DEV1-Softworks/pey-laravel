@@ -23,11 +23,18 @@ These apply on top of the core's rules (`dev1/pey-php-sdk`, `.claude/rules/secur
 
 ## 3. Webhooks
 
-- The `VerifyPeyWebhook` middleware is the only entry point. It passes the raw `$request->getContent()` and the headers to the core `WebhookVerifier`. Never call `$request->json()`, `$request->all()` or `input()` on an unverified request, and never re-encode the body.
-- A failure returns `400` with the generic body `{"error":"invalid_webhook"}`. The reason (`VerificationFailure`) is logged at `warning`. Never log the body, the headers or the secret.
-- Deduplicate on the `webhook-id` with `Cache::store(...)->add()`. Duplicates answer `200` without dispatching.
-- Warn at boot when the dedup store cannot deduplicate across workers or servers: `array` anywhere, or `file` in production.
+- The `VerifyPeyWebhook` middleware is the only entry point. It passes the raw `$request->getContent()` and `$request->headers->all()` to the core `WebhookVerifier`. Never call `$request->json()`, `$request->all()` or `input()` on an unverified request, and never re-encode the body. `WebhookEntryPointTest` fails on any other `$request->` read in `src/`, and on any `json_decode`.
+- A failure returns `400` with the generic body `{"error":"invalid_webhook"}`. The reason (`VerificationFailure`) is logged at `warning`. A verified body the core cannot read (`UnexpectedResponseException`) gets the same `400`, and is logged at `error` with the core's message, which names a field but never its value. Never log the body, the headers (the webhook id included) or the secret.
+- Deduplicate on the `webhook-id` with `add()` on the dedup store, under a hashed key. Duplicates answer `200` without dispatching.
+- If a listener throws, release the id and rethrow, so Pey's retry is dispatched. Listeners must therefore be idempotent.
+- `pey.webhooks.dedup_ttl` must be at least twice `pey.webhooks.tolerance`, so a replay is still recognized. A dedup store with the `null` driver is refused when it is resolved, because every webhook would look like a duplicate.
+- Warn at boot, from config only and without throwing, when webhooks are in use (a secret is set) and the dedup store cannot recognize a repeat:
+  - `array` outside the testing environment (one PHPUnit process is fine);
+  - `file` in production;
+  - `null` anywhere.
+- `Route::peyWebhooks()` excludes the CSRF middleware of Laravel 12 and 13 on its route only. Laravel skips CSRF during unit tests, so the exclusion is tested on the route's resolved middleware.
 - Events carry only verified core event objects (and the `VerifiedWebhook`). Never the raw body, headers or secrets. Tests serialize every event.
+- The core events are queued as they are: `BankAccountUpdated` carries the full CLABE, the holder's name and RFC, and `UnknownEvent::$payload` the whole decoded body. This was a maintainer decision (2026-11-20): documented on the events and in the README, not filtered.
 - Every payment event's docblock, the README and the docs say: confirm with `Pey::transactions()->get($id)` before fulfilling.
 
 ## 4. No POST retries

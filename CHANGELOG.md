@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Webhooks:
+  - `Route::peyWebhooks(string $uri = '/webhooks/pey')` registers a POST route named `pey.webhooks`, behind the `VerifyPeyWebhook` middleware and excluded from CSRF verification.
+  - `VerifyPeyWebhook` verifies the raw body and the headers with the SDK's `WebhookVerifier`. A failure is answered `400 {"error":"invalid_webhook"}`, and only the reason is logged.
+  - Each `webhook-id` is deduplicated in `pey.webhooks.dedup_store` for `pey.webhooks.dedup_ttl` (72 hours). A repeat is answered `200` without dispatching. A failing listener releases the id, so Pey's retry is dispatched.
+  - Events: `PeyWebhookReceived`, then `CodiQrPaymentReceived`, `CodiPushNotificationPaymentReceived`, `PaymentLinkStatusUpdated`, `BankAccountUpdated` or `UnknownPeyEvent`. They wrap the SDK's verified objects only.
+  - A warning at boot when the dedup store cannot recognize a repeated delivery: `array` outside tests, `file` in production, or `null`.
+- Requires `illuminate/http` and `illuminate/routing`.
 - `Pey` facade (`Dev1\Pey\Laravel\Facades\Pey`) for the bound `PeyClientInterface`.
 - `Pey::fake()` replaces the client with the SDK's `FakePeyClient` and returns it, like `Http::fake()`. It never talks to the network.
   - Bank account registration is guarded by `pey.allowed_clabes`, or by the list passed to `fake()`.

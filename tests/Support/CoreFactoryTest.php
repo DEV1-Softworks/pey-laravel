@@ -17,11 +17,13 @@ use Dev1\Pey\Laravel\Clock\LaravelClock;
 use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Support\CoreFactory;
 use Dev1\Pey\Laravel\Tests\TestCase;
+use Dev1\Pey\Laravel\Webhooks\WebhookDeduplicator;
 use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Testing\WebhookSigner;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\VerificationFailure;
 use Illuminate\Config\Repository;
+use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as RepositoryContract;
 use Illuminate\Log\LogManager;
 use Illuminate\Support\Facades\Date;
@@ -32,6 +34,7 @@ use PHPUnit\Framework\Attributes\UsesClass;
 #[CoversClass(CoreFactory::class)]
 #[UsesClass(PeyServiceProvider::class)]
 #[UsesClass(LaravelClock::class)]
+#[UsesClass(WebhookDeduplicator::class)]
 final class CoreFactoryTest extends TestCase
 {
     /**
@@ -345,6 +348,140 @@ final class CoreFactoryTest extends TestCase
         self::assertSame('2026-03-04T05:06:07+00:00', $payment->transaction->dateCreated->format(\DATE_ATOM));
     }
 
+    // ---------------------------------------------------- webhook dedup store
+
+    public function testTheDedupStoreIsTheDefaultCacheStore(): void
+    {
+        $deduplicator = CoreFactory::webhookDeduplicator(self::repository(), $this->cacheFactory());
+
+        self::assertTrue($deduplicator->claim('msg_default'));
+        self::assertFalse($deduplicator->claim('msg_default'));
+        self::assertTrue($this->cacheFactory()->store()->has(self::dedupKey('msg_default')));
+    }
+
+    public function testTheDedupStoreIsTheConfiguredStore(): void
+    {
+        config()->set('cache.stores.webhooks', ['driver' => 'array']);
+        $repository = self::repository(['webhooks' => ['dedup_store' => 'webhooks']], ['stores' => ['webhooks' => ['driver' => 'array']]]);
+
+        CoreFactory::webhookDeduplicator($repository, $this->cacheFactory())->claim('msg_named');
+
+        self::assertTrue($this->cacheFactory()->store('webhooks')->has(self::dedupKey('msg_named')));
+        self::assertFalse($this->cacheFactory()->store()->has(self::dedupKey('msg_named')));
+    }
+
+    public function testEmptyDedupSettingsMeanTheDefaults(): void
+    {
+        $this->freezeTime();
+        $deduplicator = CoreFactory::webhookDeduplicator(self::repository(['webhooks' => ['dedup_store' => '', 'dedup_ttl' => '']]), $this->cacheFactory());
+        $deduplicator->claim('msg_defaults');
+
+        $this->travel(WebhookDeduplicator::DEFAULT_TTL_SECONDS - 1)->seconds();
+        self::assertFalse($deduplicator->claim('msg_defaults'));
+
+        $this->travel(1)->seconds();
+        self::assertTrue($deduplicator->claim('msg_defaults'));
+    }
+
+    public function testItRefusesAnUndefinedDedupStore(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.webhooks.dedup_store setting (PEY_WEBHOOK_DEDUP_STORE) names a cache store that config/cache.php does not define.');
+
+        CoreFactory::webhookDeduplicator(self::repository(['webhooks' => ['dedup_store' => 'missing']]), $this->cacheFactory());
+    }
+
+    public function testItRefusesADedupStoreOfTheWrongType(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.webhooks.dedup_store setting (PEY_WEBHOOK_DEDUP_STORE) must be a string.');
+
+        CoreFactory::webhookDeduplicator(self::repository(['webhooks' => ['dedup_store' => 42]]), $this->cacheFactory());
+    }
+
+    /**
+     * @param array<string, mixed> $pey
+     * @param array<string, mixed> $cache
+     */
+    #[DataProvider('provideStoresThatStoreNothing')]
+    public function testItRefusesADedupStoreThatStoresNothing(array $pey, array $cache): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The Pey webhook dedup store uses the null cache driver, which stores nothing, so every webhook would be ignored as a duplicate.');
+
+        CoreFactory::webhookDeduplicator(self::repository($pey, $cache), $this->cacheFactory());
+    }
+
+    #[DataProvider('provideInvalidDedupTtls')]
+    public function testItRefusesAnInvalidDedupTtl(mixed $ttl, string $message): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($message);
+
+        CoreFactory::webhookDeduplicator(self::repository(['webhooks' => ['dedup_ttl' => $ttl]]), $this->cacheFactory());
+    }
+
+    public function testTheDedupTtlMustCoverTheReplayWindow(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.webhooks.dedup_ttl setting (PEY_WEBHOOK_DEDUP_TTL) must be at least twice pey.webhooks.tolerance, so a replayed webhook is still recognized as a duplicate.');
+
+        CoreFactory::webhookDeduplicator(self::repository(['webhooks' => ['dedup_ttl' => 599]]), $this->cacheFactory());
+    }
+
+    public function testADedupTtlOfTwiceTheToleranceIsAccepted(): void
+    {
+        $this->freezeTime();
+        $deduplicator = CoreFactory::webhookDeduplicator(self::repository(['webhooks' => ['dedup_ttl' => '60', 'tolerance' => 30]]), $this->cacheFactory());
+        $deduplicator->claim('msg_short');
+
+        $this->travel(60)->seconds();
+
+        self::assertTrue($deduplicator->claim('msg_short'));
+    }
+
+    #[DataProvider('provideDedupStoresThatCannotRecognizeDuplicates')]
+    public function testItWarnsAboutADedupStoreThatCannotRecognizeDuplicates(string $driver, bool $production, bool $testing, string $problem): void
+    {
+        $warning = CoreFactory::dedupStoreWarning(self::webhooksOn($driver), $production, $testing);
+
+        self::assertIsString($warning);
+        self::assertStringStartsWith('The Pey webhook dedup store ' . $problem, $warning);
+        self::assertStringEndsWith('Set PEY_WEBHOOK_DEDUP_STORE (config key pey.webhooks.dedup_store) to a shared cache store such as redis or database.', $warning);
+        self::assertStringNotContainsString(TestSecrets::webhookSecret(), $warning);
+    }
+
+    #[DataProvider('provideDedupStoresThatRecognizeDuplicates')]
+    public function testItDoesNotWarnAboutADedupStoreThatRecognizesDuplicates(string $driver, bool $production, bool $testing): void
+    {
+        self::assertNull(CoreFactory::dedupStoreWarning(self::webhooksOn($driver), $production, $testing));
+    }
+
+    public function testItDoesNotWarnWhenNoWebhookSecretIsConfigured(): void
+    {
+        self::assertNull(CoreFactory::dedupStoreWarning(self::repository(), true, false));
+    }
+
+    public function testTheWarningIsAboutTheConfiguredDedupStore(): void
+    {
+        $repository = self::repository(
+            ['webhooks' => ['secrets' => [TestSecrets::webhookSecret(), null], 'dedup_store' => 'local']],
+            ['default' => 'shared', 'stores' => ['shared' => ['driver' => 'redis'], 'local' => ['driver' => 'array']]],
+        );
+
+        self::assertStringContainsString('array cache driver', (string) CoreFactory::dedupStoreWarning($repository, true, false));
+    }
+
+    /**
+     * @param array<string, mixed> $pey
+     * @param array<string, mixed> $cache
+     */
+    #[DataProvider('provideUnreadableDedupSettings')]
+    public function testTheWarningNeverThrows(array $pey, array $cache): void
+    {
+        self::assertNull(CoreFactory::dedupStoreWarning(self::repository($pey, $cache), true, false));
+    }
+
     // ---------------------------------------------------------------- logger
 
     public function testItUsesTheDefaultLogChannelWhenNoneIsConfigured(): void
@@ -466,6 +603,64 @@ final class CoreFactoryTest extends TestCase
     }
 
     /**
+     * @return iterable<string, array{array<string, mixed>, array<string, mixed>}>
+     */
+    public static function provideStoresThatStoreNothing(): iterable
+    {
+        yield 'configured store' => [['webhooks' => ['dedup_store' => 'nothing']], ['stores' => ['nothing' => ['driver' => 'null']]]];
+        yield 'default store' => [[], ['default' => 'nothing', 'stores' => ['nothing' => ['driver' => 'null']]]];
+    }
+
+    /**
+     * @return iterable<string, array{mixed, string}>
+     */
+    public static function provideInvalidDedupTtls(): iterable
+    {
+        yield 'zero' => [0, 'The pey.webhooks.dedup_ttl setting (PEY_WEBHOOK_DEDUP_TTL) must be a positive number of seconds.'];
+        yield 'negative' => ['-5', 'The pey.webhooks.dedup_ttl setting (PEY_WEBHOOK_DEDUP_TTL) must be a positive number of seconds.'];
+        yield 'not a number' => ['three days', 'The pey.webhooks.dedup_ttl setting (PEY_WEBHOOK_DEDUP_TTL) must be an integer.'];
+        yield 'fractional' => [1.5, 'The pey.webhooks.dedup_ttl setting (PEY_WEBHOOK_DEDUP_TTL) must be an integer.'];
+    }
+
+    /**
+     * @return iterable<string, array{string, bool, bool, string}>
+     */
+    public static function provideDedupStoresThatCannotRecognizeDuplicates(): iterable
+    {
+        yield 'array outside tests' => ['array', false, false, 'uses the array cache driver'];
+        yield 'array in production' => ['array', true, false, 'uses the array cache driver'];
+        yield 'file in production' => ['file', true, false, 'uses the file cache driver'];
+        yield 'null in tests' => ['null', false, true, 'uses the null cache driver'];
+        yield 'null in production' => ['null', true, false, 'uses the null cache driver'];
+    }
+
+    /**
+     * @return iterable<string, array{string, bool, bool}>
+     */
+    public static function provideDedupStoresThatRecognizeDuplicates(): iterable
+    {
+        yield 'array in tests' => ['array', false, true];
+        yield 'file outside production' => ['file', false, false];
+        yield 'file in tests' => ['file', false, true];
+        yield 'redis in production' => ['redis', true, false];
+        yield 'database in production' => ['database', true, false];
+        yield 'memcached in production' => ['memcached', true, false];
+    }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>, array<string, mixed>}>
+     */
+    public static function provideUnreadableDedupSettings(): iterable
+    {
+        $array = ['stores' => ['array' => ['driver' => 'array']]];
+
+        yield 'secrets of the wrong type' => [['webhooks' => ['secrets' => 42]], $array];
+        yield 'invalid secret entry' => [['webhooks' => ['secrets' => [42]]], $array];
+        yield 'dedup store of the wrong type' => [['webhooks' => ['secrets' => [TestSecrets::webhookSecret()], 'dedup_store' => 42]], $array];
+        yield 'default store of the wrong type' => [['webhooks' => ['secrets' => [TestSecrets::webhookSecret()]]], ['default' => 42]];
+    }
+
+    /**
      * @return iterable<string, array{string, list<string>|null}>
      */
     public static function provideInvalidFakeAllowlists(): iterable
@@ -511,16 +706,46 @@ final class CoreFactoryTest extends TestCase
     // --------------------------------------------------------------- helpers
 
     /**
-     * The shipped config/pey.php (all env variables unset), with overrides.
+     * The shipped config/pey.php (all env variables unset), with overrides,
+     * and a cache config whose default store uses the array driver.
      *
      * @param array<string, mixed> $pey
+     * @param array<string, mixed> $cache
      */
-    private static function repository(array $pey = []): RepositoryContract
+    private static function repository(array $pey = [], array $cache = []): RepositoryContract
     {
         $defaults = require \dirname(__DIR__, 2) . '/config/pey.php';
         self::assertIsArray($defaults);
 
-        return new Repository(['pey' => array_replace_recursive($defaults, $pey)]);
+        return new Repository([
+            'pey' => array_replace_recursive($defaults, $pey),
+            'cache' => array_replace_recursive(['default' => 'array', 'stores' => ['array' => ['driver' => 'array']]], $cache),
+        ]);
+    }
+
+    /**
+     * The repository with a webhook secret, so webhooks are in use, and one
+     * cache store of the given driver as the default.
+     */
+    private static function webhooksOn(string $driver): RepositoryContract
+    {
+        return self::repository(
+            ['webhooks' => ['secrets' => [TestSecrets::webhookSecret(), null]]],
+            ['default' => 'webhooks', 'stores' => ['webhooks' => ['driver' => $driver]]],
+        );
+    }
+
+    private static function dedupKey(string $webhookId): string
+    {
+        return 'pey:webhook:' . hash('sha256', $webhookId);
+    }
+
+    private function cacheFactory(): CacheFactory
+    {
+        $app = $this->app;
+        self::assertNotNull($app);
+
+        return $app->make(CacheFactory::class);
     }
 
     private static function registerBankAccount(FakePeyClient $fake, string $clabe): void
