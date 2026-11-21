@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Pey` facade (`Dev1\Pey\Laravel\Facades\Pey`) for the bound `PeyClientInterface`.
+- `Pey::fake()` replaces the client with the SDK's `FakePeyClient` and returns it, like `Http::fake()`. It never talks to the network.
+  - Bank account registration is guarded by `pey.allowed_clabes`, or by the list passed to `fake()`.
+  - It uses the container's clock, so `travelTo()` moves its timestamps.
+  - `Pey::recordedCalls()` and `Pey::callsTo($method)` return the calls it recorded, for assertions.
 - `config/pey.php`, publishable with the `pey-config` tag:
   - every value is read from the environment, with the SDK's defaults;
   - it holds only scalars and arrays, so `config:cache` works.
