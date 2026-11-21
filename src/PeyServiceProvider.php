@@ -9,6 +9,7 @@ use Dev1\Pey\Exception\ConfigurationException;
 use Dev1\Pey\Idempotency\IdempotencyStore;
 use Dev1\Pey\Idempotency\IdempotentRequests;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
+use Dev1\Pey\Laravel\Console\CheckCommand;
 use Dev1\Pey\Laravel\Http\Controllers\PeyWebhookController;
 use Dev1\Pey\Laravel\Http\Middleware\VerifyPeyWebhook;
 use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
@@ -136,6 +137,8 @@ final class PeyServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->publishes([self::CONFIG_FILE => $this->app->configPath('pey.php')], 'pey-config');
+
+            $this->commands([CheckCommand::class]);
         }
 
         // AboutCommand ships with laravel/framework, not with illuminate/*.
