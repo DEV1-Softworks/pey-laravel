@@ -14,6 +14,7 @@ use Dev1\Pey\Exception\SecretExposureException;
 use Dev1\Pey\Exception\WebhookVerificationException;
 use Dev1\Pey\Http\RetryPolicy;
 use Dev1\Pey\Laravel\Clock\LaravelClock;
+use Dev1\Pey\Laravel\Idempotency\CacheIdempotencyStore;
 use Dev1\Pey\Laravel\PeyServiceProvider;
 use Dev1\Pey\Laravel\Support\CoreFactory;
 use Dev1\Pey\Laravel\Tests\TestCase;
@@ -22,10 +23,14 @@ use Dev1\Pey\Testing\FakePeyClient;
 use Dev1\Pey\Testing\WebhookSigner;
 use Dev1\Pey\Version;
 use Dev1\Pey\Webhooks\VerificationFailure;
+use Illuminate\Cache\ApcStore;
+use Illuminate\Cache\ApcWrapper;
+use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Config\Repository;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as RepositoryContract;
 use Illuminate\Log\LogManager;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -35,6 +40,7 @@ use PHPUnit\Framework\Attributes\UsesClass;
 #[UsesClass(PeyServiceProvider::class)]
 #[UsesClass(LaravelClock::class)]
 #[UsesClass(WebhookDeduplicator::class)]
+#[UsesClass(CacheIdempotencyStore::class)]
 final class CoreFactoryTest extends TestCase
 {
     /**
@@ -482,6 +488,57 @@ final class CoreFactoryTest extends TestCase
         self::assertNull(CoreFactory::dedupStoreWarning(self::repository($pey, $cache), true, false));
     }
 
+    // ----------------------------------------------------- idempotency store
+
+    public function testTheIdempotencyStoreIsTheDefaultCacheStoreInTests(): void
+    {
+        $store = CoreFactory::idempotencyStore(self::repository(), $this->cacheFactory(), true);
+
+        self::assertTrue($store->acquire('k', 'started', 60));
+        self::assertTrue($this->cacheFactory()->store()->has('pey:idempotency:k'));
+    }
+
+    public function testTheIdempotencyStoreIsTheConfiguredStore(): void
+    {
+        config()->set('cache.stores.charges', ['driver' => 'array']);
+        $repository = self::repository(['idempotency' => ['store' => 'charges']], ['stores' => ['charges' => ['driver' => 'array']]]);
+
+        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), true)->acquire('k', 'started', 60);
+
+        self::assertTrue($this->cacheFactory()->store('charges')->has('pey:idempotency:k'));
+        self::assertFalse($this->cacheFactory()->store()->has('pey:idempotency:k'));
+    }
+
+    public function testItRefusesAnUndefinedIdempotencyStore(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.idempotency.store setting (PEY_IDEMPOTENCY_STORE) names a cache store that config/cache.php does not define.');
+
+        CoreFactory::idempotencyStore(self::repository(['idempotency' => ['store' => 'missing']]), $this->cacheFactory(), true);
+    }
+
+    public function testItRefusesAnIdempotencyStoreOfTheWrongType(): void
+    {
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The pey.idempotency.store setting (PEY_IDEMPOTENCY_STORE) must be a string.');
+
+        CoreFactory::idempotencyStore(self::repository(['idempotency' => ['store' => ['redis']]]), $this->cacheFactory(), true);
+    }
+
+    #[DataProvider('provideUnsafeIdempotencyStores')]
+    public function testItRefusesAnIdempotencyStoreThatCannotLockAcrossProcesses(string $driver, bool $testing, string $problem): void
+    {
+        // Cache::extend() binds the callback to the manager, so it cannot be static.
+        Cache::extend('pey_no_locks', fn(): CacheRepository => new CacheRepository(new ApcStore(new ApcWrapper())));
+        config()->set('cache.stores.unsafe', ['driver' => $driver]);
+        $repository = self::repository(['idempotency' => ['store' => 'unsafe']], ['stores' => ['unsafe' => ['driver' => $driver]]]);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage('The Pey idempotency store ' . $problem . '. Set PEY_IDEMPOTENCY_STORE (config key pey.idempotency.store) to a shared cache store with atomic locks, such as redis or database.');
+
+        CoreFactory::idempotencyStore($repository, $this->cacheFactory(), $testing);
+    }
+
     // ---------------------------------------------------------------- logger
 
     public function testItUsesTheDefaultLogChannelWhenNoneIsConfigured(): void
@@ -600,6 +657,17 @@ final class CoreFactoryTest extends TestCase
         yield 'negative retries' => [['retry' => ['max_retries' => '-1']], 'maxRetries must be between 0 and 10.'];
         yield 'too many retries' => [['retry' => ['max_retries' => 11]], 'maxRetries must be between 0 and 10.'];
         yield 'API key with spaces' => [['api_key' => 'pey test'], 'The Pey API key must be a non-empty string of visible ASCII characters'];
+    }
+
+    /**
+     * @return iterable<string, array{string, bool, string}>
+     */
+    public static function provideUnsafeIdempotencyStores(): iterable
+    {
+        yield 'array outside tests' => ['array', false, 'uses the array cache driver, which keeps records and locks in the memory of one process, so two workers could both send the same charge'];
+        yield 'null in tests' => ['null', true, 'uses the null cache driver, which stores nothing, so every charge could be sent twice'];
+        yield 'null outside tests' => ['null', false, 'uses the null cache driver, which stores nothing, so every charge could be sent twice'];
+        yield 'no locks' => ['pey_no_locks', true, 'does not support atomic locks, so two processes could both send the same charge'];
     }
 
     /**
