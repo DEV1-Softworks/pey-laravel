@@ -85,6 +85,7 @@
         "allow-plugins": {
             "php-http/discovery": false
         },
+        "notify-on-install": false,
         "sort-packages": true
     },
     "minimum-stability": "stable",
