@@ -1,0 +1,4 @@
+# Testbench (and Larastan, which boots it for analysis) registers the
+# package provider, as package discovery does in an application.
+providers:
+  - Dev1\Pey\Laravel\PeyServiceProvider
