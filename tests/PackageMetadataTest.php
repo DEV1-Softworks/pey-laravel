@@ -47,6 +47,15 @@ final class PackageMetadataTest extends PHPUnitTestCase
         self::assertSame('^10.0 || ^11.0', self::section('require-dev')['orchestra/testbench'] ?? null);
     }
 
+    /**
+     * CI and local installs of this repository are not real installs of the
+     * SDK or of anything else, so they are not reported to Packagist.
+     */
+    public function testInstallsOfThisRepositoryAreNotReportedToPackagist(): void
+    {
+        self::assertFalse(self::section('config')['notify-on-install'] ?? null);
+    }
+
     public function testTheNamespaceIsAutoloadedFromSrc(): void
     {
         $autoload = self::section('autoload');
