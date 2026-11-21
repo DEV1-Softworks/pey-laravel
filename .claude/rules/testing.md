@@ -25,6 +25,11 @@
 - **Idempotency store**: equivalent of the core's store contract tests (atomic acquire, remember, release, recall, TTL), run against a lock-capable cache driver in Testbench. A store without atomic locks is refused.
   - `CacheIdempotencyStoreContractTestCase` holds the contract. Its subclasses run it on `array`, `file` (a temporary directory) and `database` (Testbench's SQLite, with `#[WithMigration('cache')]`).
   - Lock waits use `Sleep::fake(syncWithCarbon: true)`, never a real sleep.
+  - `RedisCacheIdempotencyStoreTest` runs the contract on a real Redis server when `PEY_TEST_REDIS_HOST` is set, and is skipped otherwise.
+    - CI always sets it, and runs PHPUnit with `--fail-on-skipped`.
+    - Redis expires keys on its own clock, which `travel()` cannot move, so its two TTL tests assert the TTL Redis was given.
+    - It uses database 15 and a random key prefix per test, and never flushes.
+    - Locally: `docker run -d --rm --name pey-laravel-redis -p 127.0.0.1:6380:6379 redis:7.4-alpine`, then `PEY_TEST_REDIS_HOST=127.0.0.1 PEY_TEST_REDIS_PORT=6380 composer test`. `PEY_TEST_REDIS_CLIENT` picks `phpredis` or `predis`; predis is a dev dependency, so no extension is needed.
 - **Commands**: non-zero exit codes on failure. Output contains no key, no full CLABE and no response body.
 
 ## Coverage
@@ -34,3 +39,4 @@
 ## Matrix
 
 - CI runs Laravel 12 on PHP 8.2–8.5 and Laravel 13 on PHP 8.3–8.5. Laravel 12 resolves Guzzle 7 and Laravel 13 resolves Guzzle 8, so behavior that depends on the HTTP client must pass on both.
+- Every test job has a Redis 7.4 service, pinned by digest. Laravel 12 on PHP 8.2 uses predis; the other rows use phpredis.
