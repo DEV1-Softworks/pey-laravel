@@ -30,7 +30,8 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 | `Idempotency\IdempotencyStore` | implemented by `CacheIdempotencyStore`, bound as a singleton | `acquire` (atomic) / `remember` / `release` / `recall`. An application's own binding wins. |
 | `Idempotency\IdempotentRequests` | bound non-shared | Built with the bound client and store, the container clock (staleness follows `travelTo()`) and the Pey log channel. Retention is the core's 7 days. `staleAfterSeconds` is `max(300, ceil(pey.timeout) + 60)`: the core requires it to exceed the HTTP timeout, which `Config` allows up to 300 s. The bridge exposes no setting for either. |
 | `Testing\FakePeyClient`, `RecordedCall` | `Pey::fake()`, `Pey::recordedCalls()`, `Pey::callsTo()`, and the `pey:webhook:sign` samples (`Console\WebhookSamples`, from its simulations) | Built as `new FakePeyClient(allowedClabes, ClockInterface)` from `pey.allowed_clabes` (or the given list) and the container clock. Calls are read through `recordedCalls()` and `callsTo()`. |
-| `Testing\WebhookSigner`, `SignedWebhook` | `pey:webhook:sign`, `InteractsWithPey` | Pass the timestamp from the Laravel clock. The signer defaults to `time()`. |
+| `Testing\WebhookSigner`, `SignedWebhook` | `pey:webhook:sign`, `InteractsWithPey::postPeyWebhook()` | Pass the timestamp from the Laravel clock. The signer defaults to `time()`. |
+| `Testing\SimulatedPayment` | `InteractsWithPey::postPeyWebhook()` | Its `webhookBody` is posted as is. |
 | `Validation\Clabe::mask()` | CLABEs in logs and output | |
 | `Resources\TransactionsInterface::listForApiKey()` | `pey:check` | First page only. A success exposes no HTTP status, so `pey:check` prints "2xx". |
 | `Exception\PeyException::httpStatus()`, `errorType()`, `requestId()` | `pey:check` failures | Never `getMessage()` of an `ApiException`: it carries Pey's error message. |
@@ -45,10 +46,11 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 ## Open gaps (core changes proposed)
 
 1. **Event to webhook body.**
-   - Needed by `pey:webhook:sign {event}` and `InteractsWithPey::postPeyWebhook(object $coreEvent)`.
+   - Was needed by `pey:webhook:sign {event}` and by the `InteractsWithPey::postPeyWebhook(object $coreEvent)` the brief described.
    - The core only parses bodies into events (`EventFactory`, internal), and its sample payloads are in `tests/Fixtures`, which is not shipped.
    - Proposal: `Testing\WebhookPayloads::fromEvent(WebhookEvent): string` and `::sample(string $type): string`.
    - `pey:webhook:sign` is covered: it uses the simulations below.
+   - `InteractsWithPey::postPeyWebhook()` takes a `SimulatedPayment` or a body string instead of a core event object. That was the maintainer's decision on 2026-11-21. `fromEvent()` remains an optional proposal, for posting an event that no simulation produces.
    - Partial workaround: `FakePeyClient`'s simulations (`simulateQrPayment()`, `simulatePushNotificationPayment()`, `simulatePaymentLinkPayment()`, `activateBankAccount()`) return documented bodies for every modelled type. The bridge's tests use them (`tests/Support/WebhookBodies.php`), and `pey:webhook:sign {event}` can too. `postPeyWebhook(object $coreEvent)` still needs `fromEvent()`.
 2. **Store contract tests.** Covered on the bridge side by `tests/Idempotency/CacheIdempotencyStoreContractTestCase.php`, run on the array, file and database drivers.
    - The core's idempotency store tests live in `tests/`, which is not shipped, so the bridge keeps equivalent tests.
