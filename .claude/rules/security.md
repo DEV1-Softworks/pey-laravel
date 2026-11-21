@@ -59,6 +59,8 @@ These apply on top of the core's rules (`dev1/pey-php-sdk`, `.claude/rules/secur
   - `add()` answering false while the record is absent is a failed write, not "already acquired".
   - A failed `put()` in `remember()`, or a value that is not a string in `recall()`, throws too.
   - Messages never contain the key or the record.
+- `file` is accepted, because its locks are atomic on one server. The package cannot tell how many servers create charges, so in production it logs a warning when the store is resolved.
+- The stale window passed to `IdempotentRequests` must outlast the HTTP timeout: `max(300, ceil(pey.timeout) + 60)`. `pey.timeout` can be up to 300 seconds.
 - `IdempotentRequests` is bound non-shared, so an instance resolved after `Pey::fake()` never wraps the real client.
 
 ## 7. No secrets in the repository

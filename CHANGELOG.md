@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `CacheIdempotencyStore` implements the SDK's `IdempotencyStore` on the cache store `pey.idempotency.store` (the default store when unset). `acquire()` takes `Cache::lock()` on the key and then calls `add()`. Storage errors are thrown.
   - Stores that cannot lock across processes are refused when resolved: no locks, `null`, or `array` outside tests.
   - `IdempotencyStore` resolves to it. `IdempotentRequests` is bound with the client, the store, the container clock and the Pey log channel, and follows `Pey::fake()`.
+  - A `file` store in production is accepted with a warning: its locks hold on one server only.
+  - The stale window is the SDK's 300 seconds, or a minute longer than `pey.timeout` when that is longer, so a request still in flight is never taken for a crash.
 - Webhooks:
   - `Route::peyWebhooks(string $uri = '/webhooks/pey')` registers a POST route named `pey.webhooks`, behind the `VerifyPeyWebhook` middleware and excluded from CSRF verification.
   - `VerifyPeyWebhook` verifies the raw body and the headers with the SDK's `WebhookVerifier`. A failure is answered `400 {"error":"invalid_webhook"}`, and only the reason is logged.
