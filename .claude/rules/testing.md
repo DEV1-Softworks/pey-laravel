@@ -32,6 +32,15 @@
     - Locally: `docker run -d --rm --name pey-laravel-redis -p 127.0.0.1:6380:6379 redis:7.4-alpine`, then `PEY_TEST_REDIS_HOST=127.0.0.1 PEY_TEST_REDIS_PORT=6380 composer test`. `PEY_TEST_REDIS_CLIENT` picks `phpredis` or `predis`; predis is a dev dependency, so no extension is needed.
 - **Commands**: non-zero exit codes on failure. Output contains no key, no full CLABE and no response body.
 
+## Documentation
+
+- `DocumentationTest` checks the README and `docs/`:
+  - every PHP example parses, and every `Dev1\Pey` class it imports exists;
+  - every page has `title` and `description` front matter, and a heading that repeats the title;
+  - every relative link and anchor resolves;
+  - `docs/configuration.md` lists exactly the env variables that `config/pey.php` reads.
+- Write examples as complete, parseable PHP (a class, not a bare method). Add a row to `docs/configuration.md` with every new env variable.
+
 ## Coverage
 
 - At least 90% line coverage on `src/`, and 100% on `src/Http/Middleware`, `src/Webhooks` and `src/Idempotency`. `tools/coverage-check.php` enforces this in CI; run it locally with `composer test:coverage`.
