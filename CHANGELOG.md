@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A missing API key or webhook secret throws a `ConfigurationException` naming the env variable, only when the client or verifier is resolved.
 - A Pey section in `php artisan about`: SDK version, base URL, whether the API key is configured, and the CLABE and webhook secret counts. Values are never shown.
 - Project scaffold:
-  - Composer package `dev1/pey-laravel`, depending on `dev1/pey-php-sdk` ^0.1 and Laravel 12 or 13
+  - Composer package `dev1/pey-laravel`, depending on `dev1/pey-php-sdk` ^0.1.1 and Laravel 12 or 13. 0.1.1 is the first SDK release that never sends a POST twice under one idempotency key after a client failure, on Guzzle 7 or 8.
   - an auto-discovered `PeyServiceProvider`
   - PHPUnit 11 with Testbench, PHPStan at level max with strict rules and Larastan, and PHP-CS-Fixer (PER-CS 3.0)
   - CI on Laravel 12 (PHP 8.2–8.5) and Laravel 13 (PHP 8.3–8.5), with coverage thresholds, `composer audit` and gitleaks

@@ -32,7 +32,7 @@ final class PackageMetadataTest extends PHPUnitTestCase
         $require = self::section('require');
 
         self::assertSame('^8.2', $require['php'] ?? null);
-        self::assertSame('^0.1', $require['dev1/pey-php-sdk'] ?? null);
+        self::assertSame('^0.1.1', $require['dev1/pey-php-sdk'] ?? null);
         self::assertArrayNotHasKey('laravel/framework', $require, 'Depend on illuminate/* components, not the whole framework.');
 
         $illuminate = array_filter($require, static fn(string $package): bool => str_starts_with($package, 'illuminate/'), \ARRAY_FILTER_USE_KEY);

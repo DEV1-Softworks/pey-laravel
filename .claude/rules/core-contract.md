@@ -2,7 +2,9 @@
 
 What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked against. Update this file whenever the bridge starts using another core API, or the core constraint changes.
 
-**Checked against:** `dev1/pey-php-sdk` **v0.1.0** (commit `e475270`, Packagist), on 2026-11-20.
+**Checked against:** `dev1/pey-php-sdk` **v0.1.1** (commit `da3039e`, Packagist), on 2026-11-20.
+
+**Minimum:** `^0.1.1`. In 0.1.0, a POST whose HTTP client threw a PSR-18 `RequestExceptionInterface` was reported as never sent, so `IdempotentRequests` could release the key and a retry could duplicate the charge. Guzzle 7 and 8 both throw that interface for failures after sending. Never lower the constraint.
 
 ## Rules
 
@@ -34,7 +36,7 @@ What this bridge uses from `dev1/pey-php-sdk`, and the version it was checked ag
 
 - **Guzzle** comes through `illuminate/http`.
   - Laravel 12 resolves Guzzle 7; Laravel 13 resolves Guzzle 8.
-  - The core's own CI only tests Guzzle `^7.9`.
+  - The core's CI tests Guzzle 7 and Guzzle 8 since v0.1.1.
 
 ## Open gaps (core changes proposed)
 
