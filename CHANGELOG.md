@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Dev1\Pey\Laravel\Testing\InteractsWithPey` for application tests:
+  - `fakePey()` replaces the client with the SDK's fake.
+  - `postPeyWebhook()` signs a simulated payment (or a body) with the configured secret, or a random test secret, and posts it to the `pey.webhooks` route.
+  - `assertPeyWebhookDispatched()` and `assertPeyWebhookNotDispatched()` count the package's events, also under `Event::fake()`.
 - Console:
   - `pey:check` shows the configuration summary and validates the client, the webhook verifier and dedup store (when a secret is set) and the idempotency store. It then calls `GET /transaction/api-key` once, first page only. It exits 1 on any failure, and never prints a secret, a CLABE or a response body.
   - `pey:webhook:sign {event}`, in the local and testing environments only, prints a sample webhook signed with the configured secret (or `--secret`), and a curl command that posts it to the `pey.webhooks` route.

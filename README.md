@@ -116,6 +116,43 @@ An attempt that never finished counts as "in progress" for 5 minutes, or a minut
 
 In tests, `Pey::fake()` applies to `IdempotentRequests` too: resolve it after faking.
 
+## Testing
+
+Pey has no sandbox, so your tests should never reach it. `Pey::fake()` replaces the client with the SDK's `FakePeyClient`. It records every call and simulates payments, failures and bank account activation. The `InteractsWithPey` trait adds webhook helpers on top:
+
+```php
+use Dev1\Pey\Dto\Request\CreateQrRequest;
+use Dev1\Pey\Laravel\Events\CodiQrPaymentReceived;
+use Dev1\Pey\Laravel\Facades\Pey;
+use Dev1\Pey\Laravel\Testing\InteractsWithPey;
+
+class CheckoutTest extends TestCase
+{
+    use InteractsWithPey;
+
+    public function test_a_paid_order_is_fulfilled(): void
+    {
+        $pey = $this->fakePey();                       // Pey::fake()
+        $qr = Pey::codi()->createQr(new CreateQrRequest('150.00'));   // or let your code create it
+        $payment = $pey->simulateQrPayment($qr->id);   // the payer pays
+
+        $this->postPeyWebhook($payment)->assertOk();   // signed like Pey's
+
+        $this->assertPeyWebhookDispatched(CodiQrPaymentReceived::class);
+        $this->assertCount(1, Pey::callsTo('codi.createQr'));
+    }
+}
+```
+
+- **`fakePey(?array $allowedClabes = null)`** calls `Pey::fake()` and returns the fake. Its clock is Laravel's, so `travelTo()` moves its timestamps. Bank account registration is guarded by `pey.allowed_clabes`, or by the list you pass.
+- **`postPeyWebhook($webhook, ?string $uri = null, ?string $id = null)`** posts the raw body and `webhook-*` headers to the `pey.webhooks` route.
+  - `$webhook` is what a simulation returned, or a body string such as the one from `activateBankAccount()`.
+  - It signs with your configured webhook secret, or with a random one it configures for the test.
+  - Pass the same `$id` twice to send the same webhook twice.
+- **`assertPeyWebhookDispatched($eventClass, ?Closure $callback = null, int $times = 1)`** and **`assertPeyWebhookNotDispatched()`** count the package's events, also under `Event::fake()`.
+
+Listeners that confirm payments with `Pey::transactions()->get()` see the fake's paid transactions.
+
 ## Console
 
 ```bash
