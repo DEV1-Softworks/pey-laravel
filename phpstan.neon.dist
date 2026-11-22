@@ -1,0 +1,34 @@
+# PHPStan at the highest level with strict rules and Larastan.
+# There is no baseline and there must never be one: fix the code instead.
+includes:
+  - vendor/larastan/larastan/extension.neon
+  - vendor/phpstan/phpstan-strict-rules/rules.neon
+  - vendor/phpstan/phpstan-phpunit/extension.neon
+  - vendor/phpstan/phpstan-phpunit/rules.neon
+
+parameters:
+  level: max
+  paths:
+    - config
+    - src
+    - tests
+    - tools
+  tmpDir: build/phpstan
+
+  # Larastan only allows env() in config directories; this package's lives here.
+  configDirectories:
+    - %currentWorkingDirectory%/config
+
+  phpVersion:
+    min: 80200
+    max: 80599
+
+  checkUninitializedProperties: true
+  checkMissingCallableSignature: true
+  checkTooWideReturnTypesInProtectedAndPublicMethods: true
+  checkBenevolentUnionTypes: true
+  reportPossiblyNonexistentGeneralArrayOffset: true
+  reportPossiblyNonexistentConstantArrayOffset: true
+  reportAlwaysTrueInLastCondition: true
+  reportAnyTypeWideningInVarTag: true
+  reportUnmatchedIgnoredErrors: true

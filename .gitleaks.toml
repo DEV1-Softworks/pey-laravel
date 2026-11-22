@@ -1,0 +1,12 @@
+# gitleaks configuration: the built-in rules plus narrow allowlists for fake
+# test values.
+#
+# Rule for new entries: each allowlist must use condition = "AND" so it matches
+# BOTH a single file AND the specific fake value. A real credential added to the
+# same file is then still reported. Never allowlist a whole directory.
+#
+# Fake webhook secrets are built at runtime in tests/Support/TestSecrets.php
+# (whsec_ + base64 of a readable test string), so no allowlist is needed for them.
+
+[extend]
+useDefault = true
